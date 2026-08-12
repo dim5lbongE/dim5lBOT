@@ -1,3 +1,8 @@
+# v0.2.0-beta.9
+
+- Packaged Windows, Android32, and Android64 into one universal Geode mod.
+- Prepared a single artifact suitable for Geode Index submission.
+
 # v0.2.0-beta.8
 
 - Added Android 32-bit and 64-bit support.
