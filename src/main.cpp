@@ -35,6 +35,7 @@ struct Engine {
     size_t playbackIndex = 0;
     bool injecting = false;
     bool playAfterReset = false;
+    bool safeMode = true;
     std::string message = "Ready";
 
     static Engine& get() {
@@ -442,9 +443,10 @@ protected:
     CCLabelBMFont* m_stateLabel = nullptr;
     CCLabelBMFont* m_messageLabel = nullptr;
     PauseLayer* m_pauseLayer = nullptr;
+    ButtonSprite* m_safeModeSprite = nullptr;
 
     bool init() {
-        if (!Popup::init(390.f, 245.f)) return false;
+        if (!Popup::init(390.f, 270.f)) return false;
         setTitle("dim5lBOT");
         m_bgSprite->setColor({25, 20, 52});
         m_bgSprite->setOpacity(245);
@@ -462,28 +464,30 @@ protected:
         m_messageLabel = CCLabelBMFont::create(Engine::get().message.c_str(), "chatFont.fnt");
         m_messageLabel->setScale(.55f);
         m_messageLabel->setColor({175, 205, 255});
-        m_messageLabel->setPosition({m_size.width / 2.f, 35.f});
+        m_messageLabel->setPosition({m_size.width / 2.f, 165.f});
         m_mainLayer->addChild(m_messageLabel);
 
         // Popup::m_buttonMenu uses the popup's bottom-left as its origin.
         // Keep every button inside the 390x245 content area on all aspect ratios.
-        addButton("Record", {75.f, 115.f}, menu_selector(BotPopup::onRecord), {210, 55, 72});
-        addButton("Stop", {195.f, 115.f}, menu_selector(BotPopup::onStop), {95, 100, 122});
-        addButton("Play", {315.f, 115.f}, menu_selector(BotPopup::onPlay), {55, 175, 105});
-        addButton("Save", {75.f, 62.f}, menu_selector(BotPopup::onSave), {65, 120, 210});
-        addButton("Load", {195.f, 62.f}, menu_selector(BotPopup::onLoad), {116, 80, 205});
-        addButton("Clear", {315.f, 62.f}, menu_selector(BotPopup::onClear), {205, 115, 45});
+        addButton("Record", {75.f, 120.f}, menu_selector(BotPopup::onRecord), {210, 55, 72});
+        addButton("Stop", {195.f, 120.f}, menu_selector(BotPopup::onStop), {95, 100, 122});
+        addButton("Play", {315.f, 120.f}, menu_selector(BotPopup::onPlay), {55, 175, 105});
+        addButton("Save", {75.f, 72.f}, menu_selector(BotPopup::onSave), {65, 120, 210});
+        addButton("Load", {195.f, 72.f}, menu_selector(BotPopup::onLoad), {116, 80, 205});
+        addButton("Clear", {315.f, 72.f}, menu_selector(BotPopup::onClear), {205, 115, 45});
+        m_safeModeSprite = addButton("Safe: ON", {195.f, 27.f}, menu_selector(BotPopup::onSafeMode), {45, 170, 90});
 
         schedule(schedule_selector(BotPopup::refresh), .05f);
         return true;
     }
 
-    void addButton(char const* text, CCPoint position, SEL_MenuHandler callback, ccColor3B color) {
+    ButtonSprite* addButton(char const* text, CCPoint position, SEL_MenuHandler callback, ccColor3B color) {
         auto sprite = ButtonSprite::create(text, 95, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .55f);
         sprite->setColor(color);
         auto button = CCMenuItemSpriteExtra::create(sprite, this, callback);
         button->setPosition(position);
         m_buttonMenu->addChild(button);
+        return sprite;
     }
 
     void refresh(float) {
@@ -538,6 +542,16 @@ protected:
         engine.message = "Replay cleared";
     }
 
+    void onSafeMode(CCObject*) {
+        auto& engine = Engine::get();
+        engine.safeMode = !engine.safeMode;
+        m_safeModeSprite->setString(engine.safeMode ? "Safe: ON" : "Safe: OFF");
+        m_safeModeSprite->setColor(engine.safeMode ? ccColor3B{45, 170, 90} : ccColor3B{190, 70, 55});
+        engine.message = engine.safeMode
+            ? "Safe Mode blocks replay completions"
+            : "Warning: Safe Mode disabled";
+    }
+
 public:
     static BotPopup* create(PauseLayer* pauseLayer) {
         auto popup = new BotPopup();
@@ -588,6 +602,16 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         auto discardRecording = engine.mode == dimbot::Mode::Recording && !m_isPracticeMode;
         PlayLayer::destroyPlayer(player, object);
         if (discardRecording) engine.discardFailedRecording();
+    }
+
+    void levelComplete() {
+        auto& engine = dimbot::Engine::get();
+        if (engine.safeMode && engine.mode == dimbot::Mode::Playing) {
+            engine.stop("Safe Mode blocked replay completion");
+            PlayLayer::resetLevel();
+            return;
+        }
+        PlayLayer::levelComplete();
     }
 
     void loadFromCheckpoint(CheckpointObject* checkpoint) {
