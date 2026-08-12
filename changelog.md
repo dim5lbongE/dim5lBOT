@@ -1,3 +1,9 @@
+# v0.2.0-beta.10
+
+- Added Safe Mode, enabled by default, to block replay-assisted level completions.
+- Added a Safe Mode toggle and warning state to the replay menu.
+- CI now tests one Windows build and one Android64 build before universal packaging.
+
 # v0.2.0-beta.9
 
 - Packaged Windows, Android32, and Android64 into one universal Geode mod.
