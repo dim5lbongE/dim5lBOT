@@ -1,3 +1,7 @@
+# v0.2.0-beta.4
+
+- Play now closes the pause layer so replay frames can advance.
+
 # v0.2.0-beta.3
 
 - Fixed gameplay inputs not being recorded on Geometry Dash 2.2081.
