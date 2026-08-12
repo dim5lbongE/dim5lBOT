@@ -1,3 +1,8 @@
+# v0.2.0-beta.12
+
+- Fixed normal-mode recordings being discarded when the game is paused.
+- Normal-mode recordings are now discarded only on an unpaused player death.
+
 # v0.2.0-beta.11
 
 - Added the official dim5lBOT mod icon.
