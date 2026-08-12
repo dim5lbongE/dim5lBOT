@@ -1,3 +1,9 @@
+# v0.2.0-beta.8
+
+- Added Android 32-bit and 64-bit support.
+- Normal-mode recordings are now discarded completely when the player dies.
+- Practice-mode recordings still rewind to the active checkpoint.
+
 # v0.2.0-beta.7
 
 - Replaced the small two-step X control with a clear one-click Delete button.
