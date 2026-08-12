@@ -315,7 +315,6 @@ protected:
     size_t m_page = 0;
     CCLabelBMFont* m_pageLabel = nullptr;
     CCLabelBMFont* m_emptyLabel = nullptr;
-    size_t m_pendingDelete = static_cast<size_t>(-1);
 
     bool init() {
         if (!Popup::init(390.f, 280.f)) return false;
@@ -364,19 +363,19 @@ protected:
         auto end = std::min(begin + PageSize, m_files.size());
         for (size_t index = begin; index < end; ++index) {
             auto name = m_files[index].stem().string();
-            auto sprite = ButtonSprite::create(name.c_str(), 245, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .48f);
+            auto sprite = ButtonSprite::create(name.c_str(), 205, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .48f);
             auto button = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(LoadReplayPopup::onSelect));
             button->setTag(static_cast<int>(index));
-            button->setPosition({178.f, 220.f - static_cast<float>(index - begin) * 38.f});
+            button->setPosition({145.f, 220.f - static_cast<float>(index - begin) * 38.f});
             m_buttonMenu->addChild(button);
             m_rows.push_back(button);
 
-            auto deleteSprite = ButtonSprite::create("X", 38, true, "bigFont.fnt", "GJ_button_06.png", 24.f, .55f);
+            auto deleteSprite = ButtonSprite::create("Delete", 80, true, "bigFont.fnt", "GJ_button_06.png", 24.f, .45f);
             auto deleteButton = CCMenuItemSpriteExtra::create(
                 deleteSprite, this, menu_selector(LoadReplayPopup::onDelete)
             );
             deleteButton->setTag(static_cast<int>(index));
-            deleteButton->setPosition({330.f, 220.f - static_cast<float>(index - begin) * 38.f});
+            deleteButton->setPosition({315.f, 220.f - static_cast<float>(index - begin) * 38.f});
             m_buttonMenu->addChild(deleteButton);
             m_rows.push_back(deleteButton);
         }
@@ -394,13 +393,11 @@ protected:
     }
 
     void onPrevious(CCObject*) {
-        m_pendingDelete = static_cast<size_t>(-1);
         if (m_page > 0) --m_page;
         rebuildPage();
     }
 
     void onNext(CCObject*) {
-        m_pendingDelete = static_cast<size_t>(-1);
         auto pages = std::max<size_t>(1, (m_files.size() + PageSize - 1) / PageSize);
         if (m_page + 1 < pages) ++m_page;
         rebuildPage();
@@ -409,13 +406,6 @@ protected:
     void onDelete(CCObject* sender) {
         auto index = static_cast<size_t>(static_cast<CCNode*>(sender)->getTag());
         if (index >= m_files.size()) return;
-        if (m_pendingDelete != index) {
-            m_pendingDelete = index;
-            m_pageLabel->setString(fmt::format("Press X again to delete {}", m_files[index].stem().string()).c_str());
-            m_pageLabel->setColor({255, 160, 90});
-            return;
-        }
-
         auto deletedName = m_files[index].stem().string();
         std::error_code error;
         std::filesystem::remove(m_files[index], error);
@@ -425,7 +415,6 @@ protected:
             return;
         }
         Engine::get().message = fmt::format("Deleted: {}", deletedName);
-        m_pendingDelete = static_cast<size_t>(-1);
         m_pageLabel->setColor({255, 255, 255});
         m_files = listMacros();
         rebuildPage();
