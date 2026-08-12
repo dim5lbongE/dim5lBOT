@@ -4,6 +4,7 @@
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/ui/Popup.hpp>
+#include <Geode/ui/TextInput.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -118,12 +119,41 @@ std::filesystem::path macroDirectory() {
     return Mod::get()->getSaveDir() / "macros";
 }
 
-std::filesystem::path macroPath() {
-    return macroDirectory() / "last-replay.json";
+std::string sanitizeMacroName(std::string name) {
+    auto invalid = std::string("\\/:*?\"<>|");
+    std::erase_if(name, [&](char ch) {
+        return static_cast<unsigned char>(ch) < 32 || invalid.find(ch) != std::string::npos;
+    });
+    while (!name.empty() && (name.front() == ' ' || name.front() == '.')) name.erase(name.begin());
+    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
+    if (name.size() > 60) name.resize(60);
+    return name;
 }
 
-Result<> saveMacro() {
+std::filesystem::path macroPath(std::string const& name) {
+    return macroDirectory() / (sanitizeMacroName(name) + ".json");
+}
+
+std::vector<std::filesystem::path> listMacros() {
+    std::vector<std::filesystem::path> result;
+    std::error_code error;
+    std::filesystem::create_directories(macroDirectory(), error);
+    if (error) return result;
+    for (auto const& entry : std::filesystem::directory_iterator(macroDirectory(), error)) {
+        if (!error && entry.is_regular_file() && entry.path().extension() == ".json")
+            result.push_back(entry.path());
+    }
+    std::sort(result.begin(), result.end(), [](auto const& a, auto const& b) {
+        return a.filename().string() < b.filename().string();
+    });
+    return result;
+}
+
+Result<> saveMacro(std::string const& requestedName) {
     auto& engine = Engine::get();
+    auto name = sanitizeMacroName(requestedName);
+    if (name.empty()) return Err("Enter a replay name");
+    if (engine.inputs.empty()) return Err("No inputs to save");
     std::error_code error;
     std::filesystem::create_directories(macroDirectory(), error);
     if (error) return Err("Could not create the macros folder: {}", error.message());
@@ -145,15 +175,16 @@ Result<> saveMacro() {
     }
     root["inputs"] = std::move(inputs);
 
-    std::ofstream stream(macroPath(), std::ios::binary | std::ios::trunc);
+    root["name"] = name;
+    std::ofstream stream(macroPath(name), std::ios::binary | std::ios::trunc);
     if (!stream) return Err("Could not open the replay file");
     stream << root.dump(2);
     if (!stream.good()) return Err("Could not write the replay file");
     return Ok();
 }
 
-Result<> loadMacro() {
-    std::ifstream stream(macroPath(), std::ios::binary);
+Result<> loadMacro(std::filesystem::path const& path) {
+    std::ifstream stream(path, std::ios::binary);
     if (!stream) return Err("No saved replay found");
 
     std::string contents(
@@ -200,7 +231,7 @@ Result<> loadMacro() {
     engine.replayEndFrame = std::max(engine.replayEndFrame, lastFrame);
     engine.frame = 0;
     engine.playbackIndex = 0;
-    engine.message = fmt::format("Loaded {} inputs", engine.inputs.size());
+    engine.message = fmt::format("Loaded {} ({} inputs)", path.stem().string(), engine.inputs.size());
     return Ok();
 }
 
@@ -216,6 +247,201 @@ std::string stateText() {
         engine.inputs.size()
     );
 }
+
+class SaveReplayPopup final : public Popup {
+protected:
+    TextInput* m_nameInput = nullptr;
+    CCLabelBMFont* m_status = nullptr;
+    std::string m_pendingOverwrite;
+
+    bool init() {
+        if (!Popup::init(340.f, 180.f)) return false;
+        setTitle("SAVE REPLAY");
+        m_nameInput = TextInput::create(245.f, "Replay name");
+        m_nameInput->setCommonFilter(CommonFilter::Any);
+        m_nameInput->setMaxCharCount(60);
+        m_nameInput->setPosition({170.f, 105.f});
+        m_mainLayer->addChild(m_nameInput);
+
+        m_status = CCLabelBMFont::create("Existing names will be overwritten", "chatFont.fnt");
+        m_status->setScale(.5f);
+        m_status->setColor({190, 205, 235});
+        m_status->setPosition({170.f, 72.f});
+        m_mainLayer->addChild(m_status);
+
+        auto sprite = ButtonSprite::create("Save", 105, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .6f);
+        auto button = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(SaveReplayPopup::onSave));
+        button->setPosition({170.f, 38.f});
+        m_buttonMenu->addChild(button);
+        return true;
+    }
+
+    void onSave(CCObject*) {
+        std::string name = m_nameInput ? std::string(m_nameInput->getString()) : "";
+        auto cleanName = sanitizeMacroName(name);
+        if (!cleanName.empty() && std::filesystem::exists(macroPath(cleanName)) && m_pendingOverwrite != cleanName) {
+            m_pendingOverwrite = cleanName;
+            m_status->setString("Already exists - press Save again to overwrite");
+            m_status->setColor({255, 205, 80});
+            return;
+        }
+        auto result = saveMacro(name);
+        if (result.isErr()) {
+            m_status->setString(result.unwrapErr().c_str());
+            m_status->setColor({255, 100, 100});
+            return;
+        }
+        Engine::get().message = fmt::format("Saved: {}", cleanName);
+        onClose(nullptr);
+    }
+
+public:
+    static SaveReplayPopup* create() {
+        auto popup = new SaveReplayPopup();
+        if (popup && popup->init()) {
+            popup->autorelease();
+            return popup;
+        }
+        delete popup;
+        return nullptr;
+    }
+};
+
+class LoadReplayPopup final : public Popup {
+protected:
+    static constexpr size_t PageSize = 5;
+    std::vector<std::filesystem::path> m_files;
+    std::vector<CCNode*> m_rows;
+    size_t m_page = 0;
+    CCLabelBMFont* m_pageLabel = nullptr;
+    CCLabelBMFont* m_emptyLabel = nullptr;
+    size_t m_pendingDelete = static_cast<size_t>(-1);
+
+    bool init() {
+        if (!Popup::init(390.f, 280.f)) return false;
+        setTitle("LOAD REPLAY");
+        m_files = listMacros();
+
+        m_pageLabel = CCLabelBMFont::create("", "chatFont.fnt");
+        m_pageLabel->setScale(.55f);
+        m_pageLabel->setPosition({195.f, 30.f});
+        m_mainLayer->addChild(m_pageLabel);
+
+        addNavButton("<", {55.f, 30.f}, menu_selector(LoadReplayPopup::onPrevious));
+        addNavButton(">", {335.f, 30.f}, menu_selector(LoadReplayPopup::onNext));
+        rebuildPage();
+        return true;
+    }
+
+    void addNavButton(char const* text, CCPoint position, SEL_MenuHandler callback) {
+        auto sprite = ButtonSprite::create(text, 50, true, "bigFont.fnt", "GJ_button_04.png", 28.f, .6f);
+        auto button = CCMenuItemSpriteExtra::create(sprite, this, callback);
+        button->setPosition(position);
+        m_buttonMenu->addChild(button);
+    }
+
+    void rebuildPage() {
+        for (auto node : m_rows) node->removeFromParent();
+        m_rows.clear();
+        if (m_emptyLabel) {
+            m_emptyLabel->removeFromParent();
+            m_emptyLabel = nullptr;
+        }
+
+        auto pages = std::max<size_t>(1, (m_files.size() + PageSize - 1) / PageSize);
+        if (m_page >= pages) m_page = pages - 1;
+        m_pageLabel->setString(fmt::format("Page {}/{}  |  {} replays", m_page + 1, pages, m_files.size()).c_str());
+
+        if (m_files.empty()) {
+            m_emptyLabel = CCLabelBMFont::create("No saved replays", "bigFont.fnt");
+            m_emptyLabel->setScale(.5f);
+            m_emptyLabel->setPosition({195.f, 145.f});
+            m_mainLayer->addChild(m_emptyLabel);
+            return;
+        }
+
+        auto begin = m_page * PageSize;
+        auto end = std::min(begin + PageSize, m_files.size());
+        for (size_t index = begin; index < end; ++index) {
+            auto name = m_files[index].stem().string();
+            auto sprite = ButtonSprite::create(name.c_str(), 245, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .48f);
+            auto button = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(LoadReplayPopup::onSelect));
+            button->setTag(static_cast<int>(index));
+            button->setPosition({178.f, 220.f - static_cast<float>(index - begin) * 38.f});
+            m_buttonMenu->addChild(button);
+            m_rows.push_back(button);
+
+            auto deleteSprite = ButtonSprite::create("X", 38, true, "bigFont.fnt", "GJ_button_06.png", 24.f, .55f);
+            auto deleteButton = CCMenuItemSpriteExtra::create(
+                deleteSprite, this, menu_selector(LoadReplayPopup::onDelete)
+            );
+            deleteButton->setTag(static_cast<int>(index));
+            deleteButton->setPosition({330.f, 220.f - static_cast<float>(index - begin) * 38.f});
+            m_buttonMenu->addChild(deleteButton);
+            m_rows.push_back(deleteButton);
+        }
+    }
+
+    void onSelect(CCObject* sender) {
+        auto index = static_cast<size_t>(static_cast<CCNode*>(sender)->getTag());
+        if (index >= m_files.size()) return;
+        auto result = loadMacro(m_files[index]);
+        if (result.isErr()) {
+            Engine::get().message = result.unwrapErr();
+            return;
+        }
+        onClose(nullptr);
+    }
+
+    void onPrevious(CCObject*) {
+        m_pendingDelete = static_cast<size_t>(-1);
+        if (m_page > 0) --m_page;
+        rebuildPage();
+    }
+
+    void onNext(CCObject*) {
+        m_pendingDelete = static_cast<size_t>(-1);
+        auto pages = std::max<size_t>(1, (m_files.size() + PageSize - 1) / PageSize);
+        if (m_page + 1 < pages) ++m_page;
+        rebuildPage();
+    }
+
+    void onDelete(CCObject* sender) {
+        auto index = static_cast<size_t>(static_cast<CCNode*>(sender)->getTag());
+        if (index >= m_files.size()) return;
+        if (m_pendingDelete != index) {
+            m_pendingDelete = index;
+            m_pageLabel->setString(fmt::format("Press X again to delete {}", m_files[index].stem().string()).c_str());
+            m_pageLabel->setColor({255, 160, 90});
+            return;
+        }
+
+        auto deletedName = m_files[index].stem().string();
+        std::error_code error;
+        std::filesystem::remove(m_files[index], error);
+        if (error) {
+            m_pageLabel->setString("Could not delete replay");
+            m_pageLabel->setColor({255, 100, 100});
+            return;
+        }
+        Engine::get().message = fmt::format("Deleted: {}", deletedName);
+        m_pendingDelete = static_cast<size_t>(-1);
+        m_pageLabel->setColor({255, 255, 255});
+        m_files = listMacros();
+        rebuildPage();
+    }
+
+public:
+    static LoadReplayPopup* create() {
+        auto popup = new LoadReplayPopup();
+        if (popup && popup->init()) {
+            popup->autorelease();
+            return popup;
+        }
+        delete popup;
+        return nullptr;
+    }
+};
 
 class BotPopup final : public Popup {
 protected:
@@ -301,15 +527,11 @@ protected:
     }
 
     void onSave(CCObject*) {
-        auto result = saveMacro();
-        Engine::get().message = result.isOk()
-            ? fmt::format("Saved {} inputs", Engine::get().inputs.size())
-            : result.unwrapErr();
+        if (auto popup = SaveReplayPopup::create()) popup->show();
     }
 
     void onLoad(CCObject*) {
-        auto result = loadMacro();
-        if (result.isErr()) Engine::get().message = result.unwrapErr();
+        if (auto popup = LoadReplayPopup::create()) popup->show();
     }
 
     void onClear(CCObject*) {
