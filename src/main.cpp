@@ -1,6 +1,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/ui/Popup.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -189,12 +190,13 @@ std::string stateText() {
     );
 }
 
-class BotPopup final : public Popup<> {
+class BotPopup final : public Popup {
 protected:
     CCLabelBMFont* m_stateLabel = nullptr;
     CCLabelBMFont* m_messageLabel = nullptr;
 
-    bool setup() override {
+    bool init() {
+        if (!Popup::init(390.f, 245.f)) return false;
         setTitle("dim5lBOT");
         m_bgSprite->setColor({25, 20, 52});
         m_bgSprite->setOpacity(245);
@@ -288,7 +290,7 @@ protected:
 public:
     static BotPopup* create() {
         auto popup = new BotPopup();
-        if (popup && popup->initAnchored(390.f, 245.f)) {
+        if (popup && popup->init()) {
             popup->autorelease();
             return popup;
         }
