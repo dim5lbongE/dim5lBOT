@@ -14,9 +14,6 @@ jobs:
           - name: Windows
             os: windows-latest
             target: Win64
-          - name: Android32
-            os: ubuntu-latest
-            target: Android32
           - name: Android64
             os: ubuntu-latest
             target: Android64
@@ -31,29 +28,12 @@ jobs:
           target: ${{ matrix.config.target }}
           combine: true
 
-  build-check-2:
-    name: Independent Windows verification
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Clean independent build
-        id: build
-        uses: geode-sdk/build-geode-mod@main
-        with:
-          sdk: latest
-          target: Win64
-      - name: Upload verification artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dim5lBOT-Windows-check-2
-          path: ${{ steps.build.outputs.build-output }}
-
   package:
     name: Package universal Geode mod
     runs-on: ubuntu-latest
     needs: [build-release]
     steps:
-      - name: Combine Windows and Android builds
+      - name: Combine Windows and Android64 builds
         id: build
         uses: geode-sdk/build-geode-mod/combine@main
       - name: Upload universal mod
