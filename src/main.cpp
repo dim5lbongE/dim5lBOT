@@ -599,7 +599,11 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         auto& engine = dimbot::Engine::get();
-        auto discardRecording = engine.mode == dimbot::Mode::Recording && !m_isPracticeMode;
+        // Opening the pause menu can temporarily route through destroyPlayer.
+        // Only an actual, unpaused normal-mode death should discard a recording.
+        auto discardRecording = engine.mode == dimbot::Mode::Recording
+            && !m_isPracticeMode
+            && !m_isPaused;
         PlayLayer::destroyPlayer(player, object);
         if (discardRecording) engine.discardFailedRecording();
     }
