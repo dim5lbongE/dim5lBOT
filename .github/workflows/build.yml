@@ -1,0 +1,39 @@
+name: Build and verify dim5lBOT
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-check-1:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean build check 1
+        id: build
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: latest
+          target: Win64
+      - name: Upload checked mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: dim5lBOT-Windows-check-1
+          path: ${{ steps.build.outputs.build-output }}
+
+  build-check-2:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean build check 2
+        id: build
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: latest
+          target: Win64
+      - name: Upload checked mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: dim5lBOT-Windows-check-2
+          path: ${{ steps.build.outputs.build-output }}
