@@ -20,6 +20,7 @@ enum class Mode {
 
 struct Input {
     uint64_t frame = 0;
+    uint64_t replayEndFrame = 0;
     bool down = false;
     int button = 1;
     bool player1 = true;
@@ -49,6 +50,7 @@ struct Engine {
     void beginRecording() {
         inputs.clear();
         frame = 0;
+        replayEndFrame = 0;
         playbackIndex = 0;
         mode = Mode::Recording;
         playAfterReset = false;
@@ -110,7 +112,7 @@ Result<> saveMacro() {
     root["format"] = "dim5lbot-replay";
     root["version"] = 1;
     root["gameVersion"] = "2.2081";
-    root["totalFrames"] = static_cast<double>(engine.frame);
+    root["totalFrames"] = static_cast<double>(engine.replayEndFrame);
 
     matjson::Value inputs = matjson::Value::array();
     for (auto const& input : engine.inputs) {
@@ -171,7 +173,12 @@ Result<> loadMacro() {
     auto& engine = Engine::get();
     engine.stop();
     engine.inputs = std::move(loaded);
-    engine.frame = lastFrame;
+    auto totalFrames = root["totalFrames"].asDouble();
+    engine.replayEndFrame = totalFrames.isOk()
+        ? static_cast<uint64_t>(std::max(0.0, totalFrames.unwrap()))
+        : lastFrame;
+    engine.replayEndFrame = std::max(engine.replayEndFrame, lastFrame);
+    engine.frame = 0;
     engine.playbackIndex = 0;
     engine.message = fmt::format("Loaded {} inputs", engine.inputs.size());
     return Ok();
@@ -283,6 +290,7 @@ protected:
         engine.stop();
         engine.inputs.clear();
         engine.frame = 0;
+        engine.replayEndFrame = 0;
         engine.playbackIndex = 0;
         engine.message = "Replay cleared";
     }
@@ -338,7 +346,12 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         if (engine.mode == dimbot::Mode::Recording || engine.mode == dimbot::Mode::Playing) {
             ++engine.frame;
         }
-        if (engine.mode == dimbot::Mode::Playing && engine.playbackIndex >= engine.inputs.size()) {
+        if (engine.mode == dimbot::Mode::Recording) {
+            engine.replayEndFrame = engine.frame;
+        }
+        if (engine.mode == dimbot::Mode::Playing &&
+            engine.playbackIndex >= engine.inputs.size() &&
+            engine.frame > engine.replayEndFrame) {
             engine.stop("Replay finished");
         }
     }
