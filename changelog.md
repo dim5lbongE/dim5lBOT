@@ -1,3 +1,9 @@
+# v0.2.0-beta.6
+
+- Replays can now be saved under a chosen name.
+- Added a paginated replay browser for loading multiple saved macros.
+- Added overwrite confirmation and two-step deletion for saved replays.
+
 # v0.2.0-beta.5
 
 - Reworked playback to use xdBot's `GJBaseGameLayer::processCommands` method.
