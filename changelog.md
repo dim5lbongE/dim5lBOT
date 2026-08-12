@@ -1,3 +1,8 @@
+# v0.2.2
+
+- Fixed Safe Mode becoming inactive after the last replay input was processed.
+- Added a dim5lBOT button to the level-complete screen.
+
 # v0.2.1
 
 - Fixed a critical bug that discarded normal-mode recordings when the game was paused.
