@@ -224,12 +224,14 @@ protected:
         m_messageLabel->setPosition({m_size.width / 2.f, 35.f});
         m_mainLayer->addChild(m_messageLabel);
 
-        addButton("Record", {-112.f, 22.f}, menu_selector(BotPopup::onRecord), {210, 55, 72});
-        addButton("Stop", {0.f, 22.f}, menu_selector(BotPopup::onStop), {95, 100, 122});
-        addButton("Play", {112.f, 22.f}, menu_selector(BotPopup::onPlay), {55, 175, 105});
-        addButton("Save", {-112.f, -35.f}, menu_selector(BotPopup::onSave), {65, 120, 210});
-        addButton("Load", {0.f, -35.f}, menu_selector(BotPopup::onLoad), {116, 80, 205});
-        addButton("Clear", {112.f, -35.f}, menu_selector(BotPopup::onClear), {205, 115, 45});
+        // Popup::m_buttonMenu uses the popup's bottom-left as its origin.
+        // Keep every button inside the 390x245 content area on all aspect ratios.
+        addButton("Record", {75.f, 115.f}, menu_selector(BotPopup::onRecord), {210, 55, 72});
+        addButton("Stop", {195.f, 115.f}, menu_selector(BotPopup::onStop), {95, 100, 122});
+        addButton("Play", {315.f, 115.f}, menu_selector(BotPopup::onPlay), {55, 175, 105});
+        addButton("Save", {75.f, 62.f}, menu_selector(BotPopup::onSave), {65, 120, 210});
+        addButton("Load", {195.f, 62.f}, menu_selector(BotPopup::onLoad), {116, 80, 205});
+        addButton("Clear", {315.f, 62.f}, menu_selector(BotPopup::onClear), {205, 115, 45});
 
         schedule(schedule_selector(BotPopup::refresh), .05f);
         return true;
