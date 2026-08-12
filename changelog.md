@@ -1,3 +1,7 @@
+# v0.2.0-beta.2
+
+- Fixed replay control buttons being clipped outside the popup.
+
 # v0.2.0-beta.1
 
 - Added frame-based P1/P2 input recording.
