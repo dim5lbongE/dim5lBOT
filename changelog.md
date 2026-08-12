@@ -1,3 +1,8 @@
+# v0.2.0-beta.5
+
+- Reworked playback to use xdBot's `GJBaseGameLayer::processCommands` method.
+- Recording and playback now share Geometry Dash's 240 TPS level-time frame clock.
+
 # v0.2.0-beta.4
 
 - Play now closes the pause layer so replay frames can advance.
