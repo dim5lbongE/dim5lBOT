@@ -1,3 +1,7 @@
+# v0.2.0-beta.11
+
+- Added the official dim5lBOT mod icon.
+
 # v0.2.0-beta.10
 
 - Added Safe Mode, enabled by default, to block replay-assisted level completions.
