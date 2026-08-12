@@ -1,3 +1,7 @@
+# v0.2.0-beta.7
+
+- Replaced the small two-step X control with a clear one-click Delete button.
+
 # v0.2.0-beta.6
 
 - Replays can now be saved under a chosen name.
