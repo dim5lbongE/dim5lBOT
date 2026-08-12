@@ -1,5 +1,4 @@
 #include <Geode/Geode.hpp>
-#include <Geode/modify/CheckpointObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
@@ -9,7 +8,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <unordered_map>
 #include <vector>
 
 using namespace geode::prelude;
@@ -38,7 +36,6 @@ struct Engine {
     bool injecting = false;
     bool playAfterReset = false;
     std::string message = "Ready";
-    std::unordered_map<CheckpointObject*, uint64_t> checkpoints;
 
     static Engine& get() {
         static Engine engine;
@@ -105,6 +102,14 @@ struct Engine {
         frame = targetFrame;
         replayEndFrame = targetFrame;
         message = fmt::format("Practice rewind: frame {}", targetFrame);
+    }
+
+    void discardFailedRecording() {
+        stop("Recording deleted after death");
+        inputs.clear();
+        frame = 0;
+        replayEndFrame = 0;
+        playbackIndex = 0;
     }
 };
 
@@ -555,7 +560,6 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         engine.stop("Ready");
         engine.frame = 0;
         engine.playbackIndex = 0;
-        engine.checkpoints.clear();
         return true;
     }
 
@@ -579,13 +583,18 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         }
     }
 
+    void destroyPlayer(PlayerObject* player, GameObject* object) {
+        auto& engine = dimbot::Engine::get();
+        auto discardRecording = engine.mode == dimbot::Mode::Recording && !m_isPracticeMode;
+        PlayLayer::destroyPlayer(player, object);
+        if (discardRecording) engine.discardFailedRecording();
+    }
+
     void loadFromCheckpoint(CheckpointObject* checkpoint) {
         PlayLayer::loadFromCheckpoint(checkpoint);
         auto& engine = dimbot::Engine::get();
         if (engine.mode != dimbot::Mode::Recording || !checkpoint) return;
-        if (auto found = engine.checkpoints.find(checkpoint); found != engine.checkpoints.end()) {
-            engine.trimToFrame(found->second);
-        }
+        engine.trimToFrame(dimbot::currentGameFrame());
     }
 };
 
@@ -620,17 +629,6 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         engine.frame = dimbot::currentGameFrame();
         engine.record(down, button, player2);
         GJBaseGameLayer::handleButton(down, button, player2);
-    }
-};
-
-class $modify(dim5lBotCheckpoint, CheckpointObject) {
-    bool init() {
-        if (!CheckpointObject::init()) return false;
-        auto& engine = dimbot::Engine::get();
-        if (engine.mode == dimbot::Mode::Recording) {
-            engine.checkpoints[this] = dimbot::currentGameFrame();
-        }
-        return true;
     }
 };
 
