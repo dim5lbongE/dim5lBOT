@@ -107,6 +107,13 @@ struct Engine {
     }
 };
 
+uint64_t currentGameFrame() {
+    auto layer = PlayLayer::get();
+    if (!layer) return 0;
+    auto time = std::max(0.0, static_cast<double>(layer->m_gameState.m_levelTime));
+    return static_cast<uint64_t>(time * 240.0) + 1;
+}
+
 std::filesystem::path macroDirectory() {
     return Mod::get()->getSaveDir() / "macros";
 }
@@ -343,29 +350,11 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void update(float dt) {
         auto& engine = dimbot::Engine::get();
-
-        if (engine.mode == dimbot::Mode::Playing) {
-            while (engine.playbackIndex < engine.inputs.size() &&
-                   engine.inputs[engine.playbackIndex].frame <= engine.frame) {
-                auto const input = engine.inputs[engine.playbackIndex++];
-                engine.injecting = true;
-                PlayLayer::handleButton(input.down, input.button, input.player1);
-                engine.injecting = false;
-            }
-        }
-
         PlayLayer::update(dt);
-
-        if (engine.mode == dimbot::Mode::Recording || engine.mode == dimbot::Mode::Playing) {
-            ++engine.frame;
-        }
+        if (engine.mode == dimbot::Mode::Recording || engine.mode == dimbot::Mode::Playing)
+            engine.frame = dimbot::currentGameFrame();
         if (engine.mode == dimbot::Mode::Recording) {
             engine.replayEndFrame = engine.frame;
-        }
-        if (engine.mode == dimbot::Mode::Playing &&
-            engine.playbackIndex >= engine.inputs.size() &&
-            engine.frame > engine.replayEndFrame) {
-            engine.stop("Replay finished");
         }
     }
 
@@ -390,6 +379,26 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 };
 
 class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
+    void processCommands(float dt, bool isHalfTick, bool isLastTick) {
+        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+
+        auto& engine = dimbot::Engine::get();
+        if (engine.mode != dimbot::Mode::Playing) return;
+
+        auto frame = dimbot::currentGameFrame();
+        engine.frame = frame;
+        engine.injecting = true;
+        while (engine.playbackIndex < engine.inputs.size() &&
+               engine.inputs[engine.playbackIndex].frame <= frame) {
+            auto const input = engine.inputs[engine.playbackIndex++];
+            GJBaseGameLayer::handleButton(input.down, input.button, input.player1);
+        }
+        engine.injecting = false;
+
+        if (engine.playbackIndex >= engine.inputs.size() && frame > engine.replayEndFrame)
+            engine.stop("Replay finished");
+    }
+
     void handleButton(bool down, int button, bool player2) {
         auto& engine = dimbot::Engine::get();
         if (engine.mode == dimbot::Mode::Playing && !engine.injecting) return;
@@ -397,6 +406,7 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         // In GD 2.2081 all real gameplay inputs pass through GJBaseGameLayer,
         // not PlayLayer. The stored bool keeps the original API value so P1/P2
         // playback is identical to recording.
+        engine.frame = dimbot::currentGameFrame();
         engine.record(down, button, player2);
         GJBaseGameLayer::handleButton(down, button, player2);
     }
@@ -407,7 +417,7 @@ class $modify(dim5lBotCheckpoint, CheckpointObject) {
         if (!CheckpointObject::init()) return false;
         auto& engine = dimbot::Engine::get();
         if (engine.mode == dimbot::Mode::Recording) {
-            engine.checkpoints[this] = engine.frame;
+            engine.checkpoints[this] = dimbot::currentGameFrame();
         }
         return true;
     }
