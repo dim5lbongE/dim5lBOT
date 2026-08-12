@@ -1,6 +1,6 @@
-# v0.2.0-beta.12
+# v0.2.1
 
-- Fixed normal-mode recordings being discarded when the game is paused.
+- Fixed a critical bug that discarded normal-mode recordings when the game was paused.
 - Normal-mode recordings are now discarded only on an unpaused player death.
 
 # v0.2.0-beta.11
