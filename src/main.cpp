@@ -1,4 +1,5 @@
 #include <Geode/Geode.hpp>
+#include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
@@ -35,6 +36,7 @@ struct Engine {
     size_t playbackIndex = 0;
     bool injecting = false;
     bool playAfterReset = false;
+    bool replaySessionActive = false;
     bool safeMode = true;
     std::string message = "Ready";
 
@@ -46,6 +48,7 @@ struct Engine {
     void stop(std::string text = "Stopped") {
         mode = Mode::Idle;
         playAfterReset = false;
+        replaySessionActive = false;
         injecting = false;
         message = std::move(text);
     }
@@ -57,6 +60,7 @@ struct Engine {
         playbackIndex = 0;
         mode = Mode::Recording;
         playAfterReset = false;
+        replaySessionActive = false;
         message = "Recording";
     }
 
@@ -76,8 +80,16 @@ struct Engine {
         frame = 0;
         playbackIndex = 0;
         playAfterReset = false;
+        replaySessionActive = true;
         mode = Mode::Playing;
         message = "Playing";
+    }
+
+    void finishPlayback() {
+        mode = Mode::Idle;
+        playAfterReset = false;
+        injecting = false;
+        message = "Replay finished";
     }
 
     void record(bool down, int button, bool player1) {
@@ -588,12 +600,14 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
     }
 
     void resetLevel() {
-        PlayLayer::resetLevel();
         auto& engine = dimbot::Engine::get();
-        if (engine.playAfterReset) {
+        auto startPlayback = engine.playAfterReset;
+        PlayLayer::resetLevel();
+        if (startPlayback) {
             engine.beginPlaybackAfterReset();
-        } else if (engine.mode == dimbot::Mode::Recording) {
-            engine.frame = 0;
+        } else {
+            engine.replaySessionActive = false;
+            if (engine.mode == dimbot::Mode::Recording) engine.frame = 0;
         }
     }
 
@@ -610,7 +624,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void levelComplete() {
         auto& engine = dimbot::Engine::get();
-        if (engine.safeMode && engine.mode == dimbot::Mode::Playing) {
+        if (engine.safeMode && engine.replaySessionActive) {
             engine.stop("Safe Mode blocked replay completion");
             PlayLayer::resetLevel();
             return;
@@ -644,7 +658,7 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         engine.injecting = false;
 
         if (engine.playbackIndex >= engine.inputs.size() && frame > engine.replayEndFrame)
-            engine.stop("Replay finished");
+            engine.finishPlayback();
     }
 
     void handleButton(bool down, int button, bool player2) {
@@ -680,5 +694,28 @@ class $modify(dim5lBotPauseLayer, PauseLayer) {
 
     void onOpenDim5lBot(CCObject*) {
         if (auto popup = dimbot::BotPopup::create(this)) popup->show();
+    }
+};
+
+class $modify(dim5lBotEndLevelLayer, EndLevelLayer) {
+    void customSetup() {
+        EndLevelLayer::customSetup();
+
+        auto sprite = ButtonSprite::create("dim5lBOT", 90, true, "bigFont.fnt", "GJ_button_04.png", 28.f, .5f);
+        auto button = CCMenuItemSpriteExtra::create(
+            sprite,
+            this,
+            menu_selector(dim5lBotEndLevelLayer::onOpenDim5lBot)
+        );
+
+        auto menu = CCMenu::create();
+        menu->setPosition({CCDirector::sharedDirector()->getWinSize().width - 62.f, 32.f});
+        menu->addChild(button);
+        menu->setID("dim5lbot-end-menu"_spr);
+        addChild(menu, 100);
+    }
+
+    void onOpenDim5lBot(CCObject*) {
+        if (auto popup = dimbot::BotPopup::create(nullptr)) popup->show();
     }
 };
