@@ -214,6 +214,7 @@ class BotPopup final : public Popup {
 protected:
     CCLabelBMFont* m_stateLabel = nullptr;
     CCLabelBMFont* m_messageLabel = nullptr;
+    PauseLayer* m_pauseLayer = nullptr;
 
     bool init() {
         if (!Popup::init(390.f, 245.f)) return false;
@@ -285,7 +286,11 @@ protected:
         if (Engine::get().playAfterReset) {
             layer->resetLevel();
         }
+        auto pauseLayer = m_pauseLayer;
         onClose(nullptr);
+        // The bot popup is opened from PauseLayer. Closing only this popup
+        // leaves the game frozen, so resume the underlying level as part of Play.
+        if (pauseLayer) pauseLayer->onResume(nullptr);
     }
 
     void onSave(CCObject*) {
@@ -311,9 +316,10 @@ protected:
     }
 
 public:
-    static BotPopup* create() {
+    static BotPopup* create(PauseLayer* pauseLayer) {
         auto popup = new BotPopup();
         if (popup && popup->init()) {
+            popup->m_pauseLayer = pauseLayer;
             popup->autorelease();
             return popup;
         }
@@ -426,6 +432,6 @@ class $modify(dim5lBotPauseLayer, PauseLayer) {
     }
 
     void onOpenDim5lBot(CCObject*) {
-        if (auto popup = dimbot::BotPopup::create()) popup->show();
+        if (auto popup = dimbot::BotPopup::create(this)) popup->show();
     }
 };
