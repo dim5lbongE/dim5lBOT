@@ -6,7 +6,7 @@
     },
     "id": "lxdim5lxl.dim5lbot",
     "name": "dim5lBOT",
-    "version": "v0.2.0-beta.10",
+    "version": "v0.2.0-beta.11",
     "developer": "lxdim5lxl",
     "description": "Frame-accurate macro recorder and replay player for Geometry Dash 2.2081.",
     "tags": ["gameplay", "utility", "cheat"]
