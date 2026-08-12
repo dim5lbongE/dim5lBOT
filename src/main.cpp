@@ -20,7 +20,6 @@ enum class Mode {
 
 struct Input {
     uint64_t frame = 0;
-    uint64_t replayEndFrame = 0;
     bool down = false;
     int button = 1;
     bool player1 = true;
@@ -30,6 +29,7 @@ struct Engine {
     Mode mode = Mode::Idle;
     std::vector<Input> inputs;
     uint64_t frame = 0;
+    uint64_t replayEndFrame = 0;
     size_t playbackIndex = 0;
     bool injecting = false;
     bool playAfterReset = false;
