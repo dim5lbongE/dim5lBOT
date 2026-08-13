@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <vector>
 
 using namespace geode::prelude;
@@ -40,10 +41,8 @@ struct Engine {
     bool safeMode = true;
     bool noclip = false;
     bool assistedSession = false;
-    size_t speedIndex = 1;
+    float speedMultiplier = 1.f;
     std::string message = "Ready";
-
-    static constexpr float SpeedPresets[] = {.5f, 1.f, 1.5f, 2.f};
 
     static Engine& get() {
         static Engine engine;
@@ -98,7 +97,7 @@ struct Engine {
     }
 
     float speed() const {
-        return SpeedPresets[std::min(speedIndex, std::size(SpeedPresets) - 1)];
+        return speedMultiplier;
     }
 
     void applySpeed() {
@@ -106,8 +105,8 @@ struct Engine {
         if (PlayLayer::get() && speed() != 1.f) assistedSession = true;
     }
 
-    void cycleSpeed() {
-        speedIndex = (speedIndex + 1) % std::size(SpeedPresets);
+    void setSpeed(float value) {
+        speedMultiplier = std::clamp(value, .1f, 10.f);
         applySpeed();
         message = fmt::format("Speedhack: {:.1f}x", speed());
     }
@@ -120,7 +119,7 @@ struct Engine {
 
     void resetCheats() {
         noclip = false;
-        speedIndex = 1;
+        speedMultiplier = 1.f;
         assistedSession = false;
         cocos2d::CCScheduler::get()->setTimeScale(1.f);
     }
@@ -483,6 +482,60 @@ public:
     }
 };
 
+class SpeedInputPopup final : public Popup {
+protected:
+    TextInput* m_input = nullptr;
+    CCLabelBMFont* m_status = nullptr;
+
+    bool init() {
+        if (!Popup::init(300.f, 180.f)) return false;
+        setTitle("SET SPEED");
+
+        m_input = TextInput::create(190.f, "0.1 - 10.0");
+        m_input->setCommonFilter(CommonFilter::Float);
+        m_input->setMaxCharCount(5);
+        m_input->setString(fmt::format("{:.1f}", Engine::get().speed()));
+        m_input->setPosition({150.f, 105.f});
+        m_mainLayer->addChild(m_input);
+
+        m_status = CCLabelBMFont::create("Enter a multiplier from 0.1x to 10.0x", "chatFont.fnt");
+        m_status->setScale(.45f);
+        m_status->setPosition({150.f, 72.f});
+        m_mainLayer->addChild(m_status);
+
+        auto sprite = ButtonSprite::create("Apply", 100, true, "bigFont.fnt", "GJ_button_01.png", 28.f, .55f);
+        auto button = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(SpeedInputPopup::onApply));
+        button->setPosition({150.f, 38.f});
+        m_buttonMenu->addChild(button);
+        return true;
+    }
+
+    void onApply(CCObject*) {
+        auto text = m_input ? std::string(m_input->getString()) : "";
+        try {
+            size_t parsed = 0;
+            auto value = std::stof(text, &parsed);
+            if (parsed != text.size() || value < .1f || value > 10.f) throw std::out_of_range("speed");
+            Engine::get().setSpeed(value);
+            onClose(nullptr);
+        } catch (...) {
+            m_status->setString("Enter a valid number from 0.1 to 10.0");
+            m_status->setColor({255, 100, 100});
+        }
+    }
+
+public:
+    static SpeedInputPopup* create() {
+        auto popup = new SpeedInputPopup();
+        if (popup && popup->init()) {
+            popup->autorelease();
+            return popup;
+        }
+        delete popup;
+        return nullptr;
+    }
+};
+
 class ToolsPopup final : public Popup {
 protected:
     ButtonSprite* m_speedSprite = nullptr;
@@ -521,12 +574,20 @@ protected:
     }
 
     void onSpeed(CCObject*) {
-        Engine::get().cycleSpeed();
-        refreshButtons();
+        if (auto popup = SpeedInputPopup::create()) popup->show();
     }
 
     void onNoclip(CCObject*) {
         Engine::get().toggleNoclip();
+        refreshButtons();
+    }
+
+    void onEnter() override {
+        Popup::onEnter();
+        schedule(schedule_selector(ToolsPopup::refresh), .1f);
+    }
+
+    void refresh(float) {
         refreshButtons();
     }
 
