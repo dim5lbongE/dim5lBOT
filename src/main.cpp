@@ -38,7 +38,12 @@ struct Engine {
     bool playAfterReset = false;
     bool replaySessionActive = false;
     bool safeMode = true;
+    bool noclip = false;
+    bool assistedSession = false;
+    size_t speedIndex = 1;
     std::string message = "Ready";
+
+    static constexpr float SpeedPresets[] = {.5f, 1.f, 1.5f, 2.f};
 
     static Engine& get() {
         static Engine engine;
@@ -90,6 +95,34 @@ struct Engine {
         playAfterReset = false;
         injecting = false;
         message = "Replay finished";
+    }
+
+    float speed() const {
+        return SpeedPresets[std::min(speedIndex, std::size(SpeedPresets) - 1)];
+    }
+
+    void applySpeed() {
+        cocos2d::CCScheduler::get()->setTimeScale(speed());
+        if (PlayLayer::get() && speed() != 1.f) assistedSession = true;
+    }
+
+    void cycleSpeed() {
+        speedIndex = (speedIndex + 1) % std::size(SpeedPresets);
+        applySpeed();
+        message = fmt::format("Speedhack: {:.1f}x", speed());
+    }
+
+    void toggleNoclip() {
+        noclip = !noclip;
+        if (PlayLayer::get() && noclip) assistedSession = true;
+        message = noclip ? "Noclip enabled" : "Noclip disabled";
+    }
+
+    void resetCheats() {
+        noclip = false;
+        speedIndex = 1;
+        assistedSession = false;
+        cocos2d::CCScheduler::get()->setTimeScale(1.f);
     }
 
     void record(bool down, int button, bool player1) {
@@ -450,6 +483,65 @@ public:
     }
 };
 
+class ToolsPopup final : public Popup {
+protected:
+    ButtonSprite* m_speedSprite = nullptr;
+    ButtonSprite* m_noclipSprite = nullptr;
+
+    bool init() {
+        if (!Popup::init(320.f, 190.f)) return false;
+        setTitle("GAMEPLAY TOOLS");
+
+        auto warning = CCLabelBMFont::create("Safe Mode blocks assisted completions", "chatFont.fnt");
+        warning->setScale(.5f);
+        warning->setColor({255, 200, 90});
+        warning->setPosition({160.f, 125.f});
+        m_mainLayer->addChild(warning);
+
+        m_speedSprite = addButton("", {95.f, 75.f}, menu_selector(ToolsPopup::onSpeed));
+        m_noclipSprite = addButton("", {225.f, 75.f}, menu_selector(ToolsPopup::onNoclip));
+        refreshButtons();
+        return true;
+    }
+
+    ButtonSprite* addButton(char const* text, CCPoint position, SEL_MenuHandler callback) {
+        auto sprite = ButtonSprite::create(text, 115, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .5f);
+        auto button = CCMenuItemSpriteExtra::create(sprite, this, callback);
+        button->setPosition(position);
+        m_buttonMenu->addChild(button);
+        return sprite;
+    }
+
+    void refreshButtons() {
+        auto& engine = Engine::get();
+        m_speedSprite->setString(fmt::format("Speed {:.1f}x", engine.speed()).c_str());
+        m_speedSprite->setColor(engine.speed() == 1.f ? ccColor3B{85, 105, 130} : ccColor3B{205, 120, 45});
+        m_noclipSprite->setString(engine.noclip ? "Noclip: ON" : "Noclip: OFF");
+        m_noclipSprite->setColor(engine.noclip ? ccColor3B{190, 70, 55} : ccColor3B{85, 105, 130});
+    }
+
+    void onSpeed(CCObject*) {
+        Engine::get().cycleSpeed();
+        refreshButtons();
+    }
+
+    void onNoclip(CCObject*) {
+        Engine::get().toggleNoclip();
+        refreshButtons();
+    }
+
+public:
+    static ToolsPopup* create() {
+        auto popup = new ToolsPopup();
+        if (popup && popup->init()) {
+            popup->autorelease();
+            return popup;
+        }
+        delete popup;
+        return nullptr;
+    }
+};
+
 class BotPopup final : public Popup {
 protected:
     CCLabelBMFont* m_stateLabel = nullptr;
@@ -487,7 +579,9 @@ protected:
         addButton("Save", {75.f, 72.f}, menu_selector(BotPopup::onSave), {65, 120, 210});
         addButton("Load", {195.f, 72.f}, menu_selector(BotPopup::onLoad), {116, 80, 205});
         addButton("Clear", {315.f, 72.f}, menu_selector(BotPopup::onClear), {205, 115, 45});
-        m_safeModeSprite = addButton("Safe: ON", {195.f, 27.f}, menu_selector(BotPopup::onSafeMode), {45, 170, 90});
+        auto& engine = Engine::get();
+        m_safeModeSprite = addButton(engine.safeMode ? "Safe: ON" : "Safe: OFF", {130.f, 27.f}, menu_selector(BotPopup::onSafeMode), engine.safeMode ? ccColor3B{45, 170, 90} : ccColor3B{190, 70, 55});
+        addButton("Tools", {260.f, 27.f}, menu_selector(BotPopup::onTools), {205, 85, 45});
 
         schedule(schedule_selector(BotPopup::refresh), .05f);
         return true;
@@ -564,6 +658,10 @@ protected:
             : "Warning: Safe Mode disabled";
     }
 
+    void onTools(CCObject*) {
+        if (auto popup = ToolsPopup::create()) popup->show();
+    }
+
 public:
     static BotPopup* create(PauseLayer* pauseLayer) {
         auto popup = new BotPopup();
@@ -584,6 +682,8 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
         auto& engine = dimbot::Engine::get();
         engine.stop("Ready");
+        engine.assistedSession = engine.noclip || engine.speed() != 1.f;
+        engine.applySpeed();
         engine.frame = 0;
         engine.playbackIndex = 0;
         return true;
@@ -607,12 +707,17 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
             engine.beginPlaybackAfterReset();
         } else {
             engine.replaySessionActive = false;
+            engine.assistedSession = engine.noclip || engine.speed() != 1.f;
             if (engine.mode == dimbot::Mode::Recording) engine.frame = 0;
         }
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         auto& engine = dimbot::Engine::get();
+        if (engine.noclip && !m_isPaused) {
+            engine.assistedSession = true;
+            return;
+        }
         // Opening the pause menu can temporarily route through destroyPlayer.
         // Only an actual, unpaused normal-mode death should discard a recording.
         auto discardRecording = engine.mode == dimbot::Mode::Recording
@@ -624,12 +729,17 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void levelComplete() {
         auto& engine = dimbot::Engine::get();
-        if (engine.safeMode && engine.replaySessionActive) {
+        if (engine.safeMode && (engine.replaySessionActive || engine.assistedSession)) {
             engine.stop("Safe Mode blocked replay completion");
             PlayLayer::resetLevel();
             return;
         }
         PlayLayer::levelComplete();
+    }
+
+    void onQuit() {
+        dimbot::Engine::get().resetCheats();
+        PlayLayer::onQuit();
     }
 
     void loadFromCheckpoint(CheckpointObject* checkpoint) {
