@@ -1,3 +1,8 @@
+# v0.3.2
+
+- Added Android32 support to the universal package.
+- CI now builds and verifies Windows, Android64, and Android32.
+
 # v0.3.1
 
 - Replaced fixed Speedhack presets with a custom multiplier input.
