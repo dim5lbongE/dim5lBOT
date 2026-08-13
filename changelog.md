@@ -1,3 +1,8 @@
+# v0.3.1
+
+- Replaced fixed Speedhack presets with a custom multiplier input.
+- Speedhack now accepts values from 0.1x to 10.0x.
+
 # v0.3.0
 
 - Added a gameplay tools menu.
