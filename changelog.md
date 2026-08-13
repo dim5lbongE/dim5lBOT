@@ -1,3 +1,11 @@
+# v0.3.0
+
+- Added a gameplay tools menu.
+- Added Speedhack presets: 0.5x, 1.0x, 1.5x, and 2.0x.
+- Added a Noclip toggle.
+- Safe Mode now blocks completions assisted by replay, Speedhack, or Noclip.
+- Speedhack and Noclip automatically reset when leaving a level.
+
 # v0.2.2
 
 - Fixed Safe Mode becoming inactive after the last replay input was processed.
