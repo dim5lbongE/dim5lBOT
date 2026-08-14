@@ -7,6 +7,7 @@
 #include <Geode/ui/TextInput.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -41,6 +42,7 @@ struct Engine {
     bool safeMode = true;
     bool noclip = false;
     bool assistedSession = false;
+    bool pendingDeathCheck = false;
     float speedMultiplier = 1.f;
     std::string message = "Ready";
 
@@ -54,6 +56,7 @@ struct Engine {
         playAfterReset = false;
         replaySessionActive = false;
         injecting = false;
+        pendingDeathCheck = false;
         message = std::move(text);
     }
 
@@ -65,6 +68,7 @@ struct Engine {
         mode = Mode::Recording;
         playAfterReset = false;
         replaySessionActive = false;
+        pendingDeathCheck = false;
         message = "Recording";
     }
 
@@ -162,7 +166,7 @@ uint64_t currentGameFrame() {
     auto layer = PlayLayer::get();
     if (!layer) return 0;
     auto time = std::max(0.0, static_cast<double>(layer->m_gameState.m_levelTime));
-    return static_cast<uint64_t>(time * 240.0) + 1;
+    return static_cast<uint64_t>(std::llround(time * 240.0));
 }
 
 std::filesystem::path macroDirectory() {
@@ -211,6 +215,7 @@ Result<> saveMacro(std::string const& requestedName) {
     matjson::Value root = matjson::Value::object();
     root["format"] = "dim5lbot-replay";
     root["version"] = 1;
+    root["tps"] = 240;
     root["gameVersion"] = "2.2081";
     root["totalFrames"] = static_cast<double>(engine.replayEndFrame);
 
@@ -747,6 +752,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         engine.applySpeed();
         engine.frame = 0;
         engine.playbackIndex = 0;
+        engine.pendingDeathCheck = false;
         return true;
     }
 
@@ -763,6 +769,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
     void resetLevel() {
         auto& engine = dimbot::Engine::get();
         auto startPlayback = engine.playAfterReset;
+        engine.pendingDeathCheck = false;
         PlayLayer::resetLevel();
         if (startPlayback) {
             engine.beginPlaybackAfterReset();
@@ -779,13 +786,25 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
             engine.assistedSession = true;
             return;
         }
-        // Opening the pause menu can temporarily route through destroyPlayer.
-        // Only an actual, unpaused normal-mode death should discard a recording.
-        auto discardRecording = engine.mode == dimbot::Mode::Recording
-            && !m_isPracticeMode
-            && !m_isPaused;
         PlayLayer::destroyPlayer(player, object);
-        if (discardRecording) engine.discardFailedRecording();
+
+        // Pause transitions can call destroyPlayer without killing the player.
+        // Verify the player's state on the next game update before discarding.
+        if (engine.mode == dimbot::Mode::Recording && !m_isPracticeMode)
+            engine.pendingDeathCheck = true;
+    }
+
+    void postUpdate(float dt) {
+        PlayLayer::postUpdate(dt);
+
+        auto& engine = dimbot::Engine::get();
+        if (!engine.pendingDeathCheck) return;
+        engine.pendingDeathCheck = false;
+
+        auto actuallyDead = !m_isPaused && !m_isPracticeMode &&
+            ((m_player1 && m_player1->m_isDead) || (m_player2 && m_player2->m_isDead));
+        if (engine.mode == dimbot::Mode::Recording && actuallyDead)
+            engine.discardFailedRecording();
     }
 
     void levelComplete() {
@@ -813,22 +832,26 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
 class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
-        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
-
         auto& engine = dimbot::Engine::get();
-        if (engine.mode != dimbot::Mode::Playing) return;
-
         auto frame = dimbot::currentGameFrame();
         engine.frame = frame;
-        engine.injecting = true;
-        while (engine.playbackIndex < engine.inputs.size() &&
-               engine.inputs[engine.playbackIndex].frame <= frame) {
-            auto const input = engine.inputs[engine.playbackIndex++];
-            GJBaseGameLayer::handleButton(input.down, input.button, input.player1);
-        }
-        engine.injecting = false;
 
-        if (engine.playbackIndex >= engine.inputs.size() && frame > engine.replayEndFrame)
+        // Apply recorded input before this tick's physics, matching the order in
+        // which a live input reaches Geometry Dash's command processor.
+        if (engine.mode == dimbot::Mode::Playing) {
+            engine.injecting = true;
+            while (engine.playbackIndex < engine.inputs.size() &&
+                   engine.inputs[engine.playbackIndex].frame <= frame) {
+                auto const input = engine.inputs[engine.playbackIndex++];
+                GJBaseGameLayer::handleButton(input.down, input.button, input.player1);
+            }
+            engine.injecting = false;
+        }
+
+        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+
+        if (engine.mode == dimbot::Mode::Playing &&
+            engine.playbackIndex >= engine.inputs.size() && frame > engine.replayEndFrame)
             engine.finishPlayback();
     }
 
@@ -839,7 +862,10 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         // In GD 2.2081 all real gameplay inputs pass through GJBaseGameLayer,
         // not PlayLayer. The stored bool keeps the original API value so P1/P2
         // playback is identical to recording.
-        engine.frame = dimbot::currentGameFrame();
+        // processCommands owns the stable 240 TPS frame clock. Inputs occurring
+        // between ticks stay attached to the tick that will process them.
+        if (engine.mode != dimbot::Mode::Recording)
+            engine.frame = dimbot::currentGameFrame();
         engine.record(down, button, player2);
         GJBaseGameLayer::handleButton(down, button, player2);
     }
