@@ -1,4 +1,4 @@
-# v0.3.2
+# v1.0.0
 
 - Fixed pause transitions incorrectly deleting an active normal-mode recording.
 - A recording is now discarded only after the next game update confirms an actual player death.
