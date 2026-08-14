@@ -17,9 +17,6 @@ jobs:
           - name: Android64
             os: ubuntu-latest
             target: Android64
-          - name: Android32
-            os: ubuntu-latest
-            target: Android32
     name: Build ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
     steps:
@@ -36,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-release]
     steps:
-      - name: Combine Windows, Android64, and Android32 builds
+      - name: Combine Windows and Android64 builds
         id: build
         uses: geode-sdk/build-geode-mod/combine@main
       - name: Upload universal mod
