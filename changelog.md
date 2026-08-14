@@ -1,13 +1,9 @@
-# v0.3.3
+# v0.3.2
 
 - Fixed pause transitions incorrectly deleting an active normal-mode recording.
 - A recording is now discarded only after the next game update confirms an actual player death.
 - Replay inputs are now injected before the matching 240 TPS physics tick.
 - Frame conversion now rounds to the nearest tick to reduce floating-point drift.
-
-# v0.3.2
-
-- Prepared the replay accuracy and pause-state fixes.
 
 # v0.3.1
 
