@@ -2,11 +2,12 @@
     "geode": "5.9.0",
     "gd": {
         "win": "2.2081",
+        "mac": "2.2081",
         "android": "2.2081"
     },
     "id": "lxdim5lxl.dim5lbot",
     "name": "dim5lBOT",
-    "version": "v1.0.0",
+    "version": "v1.1.0",
     "developer": "lxdim5lxl",
     "description": "Frame-accurate macro recorder and replay player for Geometry Dash 2.2081.",
     "tags": ["gameplay", "utility", "cheat"]
