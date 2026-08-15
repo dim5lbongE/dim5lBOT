@@ -17,6 +17,9 @@ jobs:
           - name: Android64
             os: ubuntu-latest
             target: Android64
+          - name: macOS
+            os: macos-latest
+            target: MacOS
     name: Build ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
     steps:
@@ -33,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-release]
     steps:
-      - name: Combine Windows and Android64 builds
+      - name: Combine Windows, Android64, and macOS builds
         id: build
         uses: geode-sdk/build-geode-mod/combine@main
       - name: Upload universal mod
