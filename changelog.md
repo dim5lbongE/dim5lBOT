@@ -1,3 +1,9 @@
+# v1.1.0
+
+- Fixed Speedhack resetting to 1.0x after the player dies or restarts the level.
+- Speedhack now resets only when leaving the level.
+- Added macOS support and macOS CI packaging.
+
 # v1.0.0
 
 - Fixed pause transitions incorrectly deleting an active normal-mode recording.
