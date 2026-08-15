@@ -771,6 +771,9 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         auto startPlayback = engine.playAfterReset;
         engine.pendingDeathCheck = false;
         PlayLayer::resetLevel();
+        // Geometry Dash resets the scheduler time scale during a death restart.
+        // Restore the user's selected multiplier after every level reset.
+        engine.applySpeed();
         if (startPlayback) {
             engine.beginPlaybackAfterReset();
         } else {
