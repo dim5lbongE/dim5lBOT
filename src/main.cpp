@@ -257,8 +257,9 @@ Result<> saveMacro(std::string const& requestedName) {
 
     matjson::Value root = matjson::Value::object();
     root["format"] = "dim5lbot-replay";
-    root["version"] = 1;
+    root["version"] = 2;
     root["tps"] = 240;
+    root["accuracy"] = "input-fixes";
     root["gameVersion"] = "2.2081";
     root["totalFrames"] = static_cast<double>(engine.replayEndFrame);
 
@@ -272,6 +273,20 @@ Result<> saveMacro(std::string const& requestedName) {
         inputs.push(std::move(item));
     }
     root["inputs"] = std::move(inputs);
+
+    matjson::Value fixes = matjson::Value::array();
+    for (auto const& fix : engine.frameFixes) {
+        matjson::Value item = matjson::Value::object();
+        item["frame"] = static_cast<double>(fix.frame);
+        item["p1x"] = fix.player1.x;
+        item["p1y"] = fix.player1.y;
+        item["p1r"] = fix.player1.rotation;
+        item["p2x"] = fix.player2.x;
+        item["p2y"] = fix.player2.y;
+        item["p2r"] = fix.player2.rotation;
+        fixes.push(std::move(item));
+    }
+    root["frameFixes"] = std::move(fixes);
 
     root["name"] = name;
     std::ofstream stream(macroPath(name), std::ios::binary | std::ios::trunc);
@@ -319,9 +334,42 @@ Result<> loadMacro(std::filesystem::path const& path) {
         return a.frame < b.frame;
     });
 
+    std::vector<FrameFix> loadedFixes;
+    if (root["frameFixes"].isArray()) {
+        for (auto const& item : root["frameFixes"]) {
+            auto frame = item["frame"].asDouble();
+            auto p1x = item["p1x"].asDouble();
+            auto p1y = item["p1y"].asDouble();
+            auto p1r = item["p1r"].asDouble();
+            auto p2x = item["p2x"].asDouble();
+            auto p2y = item["p2y"].asDouble();
+            auto p2r = item["p2r"].asDouble();
+            if (frame.isErr() || p1x.isErr() || p1y.isErr() || p1r.isErr() ||
+                p2x.isErr() || p2y.isErr() || p2r.isErr()) {
+                return Err("Replay contains a malformed frame fix");
+            }
+            FrameFix fix;
+            fix.frame = static_cast<uint64_t>(std::max(0.0, frame.unwrap()));
+            fix.player1 = {
+                static_cast<float>(p1x.unwrap()), static_cast<float>(p1y.unwrap()),
+                static_cast<float>(p1r.unwrap())
+            };
+            fix.player2 = {
+                static_cast<float>(p2x.unwrap()), static_cast<float>(p2y.unwrap()),
+                static_cast<float>(p2r.unwrap())
+            };
+            loadedFixes.push_back(fix);
+            lastFrame = std::max(lastFrame, fix.frame);
+        }
+        std::stable_sort(loadedFixes.begin(), loadedFixes.end(), [](FrameFix const& a, FrameFix const& b) {
+            return a.frame < b.frame;
+        });
+    }
+
     auto& engine = Engine::get();
     engine.stop();
     engine.inputs = std::move(loaded);
+    engine.frameFixes = std::move(loadedFixes);
     auto totalFrames = root["totalFrames"].asDouble();
     engine.replayEndFrame = totalFrames.isOk()
         ? static_cast<uint64_t>(std::max(0.0, totalFrames.unwrap()))
@@ -329,7 +377,12 @@ Result<> loadMacro(std::filesystem::path const& path) {
     engine.replayEndFrame = std::max(engine.replayEndFrame, lastFrame);
     engine.frame = 0;
     engine.playbackIndex = 0;
-    engine.message = fmt::format("Loaded {} ({} inputs)", path.stem().string(), engine.inputs.size());
+    engine.frameFixIndex = 0;
+    engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
+    engine.message = fmt::format(
+        "Loaded {} ({} inputs, {} fixes)",
+        path.stem().string(), engine.inputs.size(), engine.frameFixes.size()
+    );
     return Ok();
 }
 
