@@ -868,7 +868,18 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
     void resetLevel() {
         auto& engine = dimbot::Engine::get();
         auto startPlayback = engine.playAfterReset;
+
+        // Never discard a recording directly from destroyPlayer/postUpdate:
+        // pause transitions can emit a synthetic destroyPlayer call. A normal
+        // recording is failed only when a real dead player triggers a reset.
+        auto discardRecording = engine.pendingDeathCheck &&
+            engine.mode == dimbot::Mode::Recording &&
+            !m_isPaused && !m_isPracticeMode &&
+            ((m_player1 && m_player1->m_isDead) ||
+             (m_player2 && m_player2->m_isDead));
         engine.pendingDeathCheck = false;
+        if (discardRecording) engine.discardFailedRecording();
+
         engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
         if (!startPlayback) engine.frameFixIndex = 0;
         PlayLayer::resetLevel();
@@ -892,23 +903,10 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         }
         PlayLayer::destroyPlayer(player, object);
 
-        // Pause transitions can call destroyPlayer without killing the player.
-        // Verify the player's state on the next game update before discarding.
+        // Only mark a possible death here. resetLevel validates the real dead
+        // state, so pause transitions can never discard the recording.
         if (engine.mode == dimbot::Mode::Recording && !m_isPracticeMode)
             engine.pendingDeathCheck = true;
-    }
-
-    void postUpdate(float dt) {
-        PlayLayer::postUpdate(dt);
-
-        auto& engine = dimbot::Engine::get();
-        if (!engine.pendingDeathCheck) return;
-        engine.pendingDeathCheck = false;
-
-        auto actuallyDead = !m_isPaused && !m_isPracticeMode &&
-            ((m_player1 && m_player1->m_isDead) || (m_player2 && m_player2->m_isDead));
-        if (engine.mode == dimbot::Mode::Recording && actuallyDead)
-            engine.discardFailedRecording();
     }
 
     void levelComplete() {
