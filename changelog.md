@@ -3,6 +3,10 @@
 - Fixed Speedhack resetting to 1.0x after the player dies or restarts the level.
 - Speedhack now resets only when leaving the level.
 - Added macOS support and macOS CI packaging.
+- Reworked macro timing to match xdBot's command-tick order.
+- Added xdBot-style Input Fixes that capture and restore P1/P2 position and rotation at each input.
+- Added duplicate command-tick protection to prevent replay inputs from being consumed twice.
+- Upgraded replay JSON to format version 2 while retaining version 1 loading compatibility.
 
 # v1.0.0
 
