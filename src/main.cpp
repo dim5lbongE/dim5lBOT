@@ -854,6 +854,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         engine.frameFixIndex = 0;
         engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
         engine.pendingDeathCheck = false;
+        engine.levelCompletionInProgress = false;
         return true;
     }
 
@@ -881,7 +882,8 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
             ((m_player1 && m_player1->m_isDead) ||
              (m_player2 && m_player2->m_isDead));
         engine.pendingDeathCheck = false;
-        engine.levelCompletionInProgress = false;
+        // Keep completion protection alive for the entire end-screen lifecycle.
+        // Geometry Dash may invoke resetLevel more than once after a clear.
         if (discardRecording) engine.discardFailedRecording();
 
         engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
