@@ -1,5 +1,6 @@
 # v1.1.0
 
+- Fixed completed levels being mistaken for deaths and clearing the finished recording.
 - Fixed pause transitions incorrectly discarding an active recording; deletion now occurs only when a real player death triggers a level reset.
 - Fixed Speedhack resetting to 1.0x after the player dies or restarts the level.
 - Speedhack now resets only when leaving the level.
