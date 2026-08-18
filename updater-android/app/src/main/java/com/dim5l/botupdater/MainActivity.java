@@ -124,6 +124,33 @@ public class MainActivity extends Activity {
         guide.addView(step("3", "Geode 재실행", "설치 완료 후 Geode Launcher를 다시 실행하세요."));
         root.addView(guide);
 
+        TextView logTitle = text("업데이트 로그", 19, Color.WHITE);
+        logTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        logTitle.setPadding(dp(2), dp(28), 0, dp(12));
+        root.addView(logTitle);
+        LinearLayout logCard = card();
+        logCard.addView(changeLog(
+            "v1.1.0", "LATEST",
+            "• Windows · Android64 · macOS 지원\n" +
+            "• xdBot 방식 입력·위치·회전 보정\n" +
+            "• 사망 후 Speedhack 배속 유지\n" +
+            "• 일시정지·클리어 시 녹화 보존"
+        ));
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.rgb(62, 49, 104));
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(-1, dp(1));
+        dividerParams.setMargins(0, dp(15), 0, dp(15));
+        divider.setLayoutParams(dividerParams);
+        logCard.addView(divider);
+        logCard.addView(changeLog(
+            "v1.0.0", "RELEASE",
+            "• dim5lBOT 첫 정식 버전\n" +
+            "• 240 TPS 입력 녹화·재생\n" +
+            "• 매크로 저장·불러오기\n" +
+            "• Speedhack · Noclip · Safe Mode"
+        ));
+        root.addView(logCard);
+
         TextView path = text("권장 폴더\nAndroid/media/com.geode.launcher/game/geode/mods", 12, Color.rgb(145, 137, 179));
         path.setGravity(Gravity.CENTER);
         path.setPadding(0, dp(22), 0, 0);
@@ -164,6 +191,32 @@ public class MainActivity extends Activity {
         copy.addView(b);
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
         return row;
+    }
+
+    private LinearLayout changeLog(String version, String badgeText, String changes) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView versionText = text(version, 17, Color.WHITE);
+        versionText.setTypeface(Typeface.DEFAULT_BOLD);
+        header.addView(versionText);
+        TextView badge = text(badgeText, 10, Color.rgb(235, 223, 255));
+        badge.setGravity(Gravity.CENTER);
+        badge.setTypeface(Typeface.DEFAULT_BOLD);
+        badge.setBackground(rounded(Color.rgb(75, 50, 139), 10));
+        LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, dp(24));
+        badgeParams.setMargins(dp(10), 0, 0, 0);
+        badge.setPadding(dp(9), 0, dp(9), 0);
+        badge.setLayoutParams(badgeParams);
+        header.addView(badge);
+        block.addView(header);
+        TextView body = text(changes, 13, Color.rgb(198, 193, 218));
+        body.setPadding(0, dp(9), 0, 0);
+        body.setLineSpacing(dp(3), 1.18f);
+        block.addView(body);
+        return block;
     }
 
     private GradientDrawable rounded(int color, int radiusDp) {
