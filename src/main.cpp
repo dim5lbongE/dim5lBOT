@@ -849,6 +849,8 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         engine.applySpeed();
         engine.frame = 0;
         engine.playbackIndex = 0;
+        engine.frameFixIndex = 0;
+        engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
         engine.pendingDeathCheck = false;
         return true;
     }
@@ -867,6 +869,8 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         auto& engine = dimbot::Engine::get();
         auto startPlayback = engine.playAfterReset;
         engine.pendingDeathCheck = false;
+        engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
+        if (!startPlayback) engine.frameFixIndex = 0;
         PlayLayer::resetLevel();
         // Geometry Dash resets the scheduler time scale during a death restart.
         // Restore the user's selected multiplier after every level reset.
