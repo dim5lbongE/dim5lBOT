@@ -32,13 +32,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
     private static final int PICK_MODS_FOLDER = 4101;
@@ -46,6 +42,8 @@ public class MainActivity extends Activity {
     private static final String KEY_TREE = "mods_tree";
     private static final String MANIFEST_URL =
         "https://raw.githubusercontent.com/dim5lbongE/dim5lBOT/main/updates/latest.json";
+    private static final String EXPECTED_TREE_ID =
+        "primary:Android/media/com.geode.launcher/game/geode/mods";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private TextView folderText;
@@ -260,6 +258,18 @@ public class MainActivity extends Activity {
         super.onActivityResult(request, result, data);
         if (request != PICK_MODS_FOLDER || result != RESULT_OK || data == null || data.getData() == null) return;
         modsTree = data.getData();
+        try {
+            String selectedId = DocumentsContract.getTreeDocumentId(modsTree);
+            if (!EXPECTED_TREE_ID.equals(selectedId)) {
+                modsTree = null;
+                fail("잘못된 폴더입니다. Android/media/com.geode.launcher/game/geode/mods를 선택하세요.\n선택값: " + selectedId);
+                return;
+            }
+        } catch (Exception error) {
+            modsTree = null;
+            fail("선택한 폴더 경로를 확인할 수 없습니다.");
+            return;
+        }
         int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         try { getContentResolver().takePersistableUriPermission(modsTree, flags); }
         catch (SecurityException ignored) { }
@@ -269,7 +279,15 @@ public class MainActivity extends Activity {
     }
 
     private void refreshFolderText() {
-        folderText.setText(modsTree == null ? "모드 폴더: 선택되지 않음" : "모드 폴더: 연결됨");
+        if (modsTree == null) {
+            folderText.setText("모드 폴더: 선택되지 않음");
+            return;
+        }
+        try {
+            folderText.setText("모드 폴더: " + DocumentsContract.getTreeDocumentId(modsTree));
+        } catch (Exception error) {
+            folderText.setText("모드 폴더: 경로 확인 실패");
+        }
     }
 
     private void checkForUpdates(boolean automatic) {
@@ -310,15 +328,15 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             File temp = new File(getCacheDir(), info.fileName + ".download");
             try {
+                requireCorrectModsFolder();
                 byte[] bytes = downloadBytes(info.url);
                 try (FileOutputStream out = new FileOutputStream(temp)) { out.write(bytes); }
                 String actual = sha256(new FileInputStream(temp));
                 if (!info.sha256.equals(actual)) throw new Exception("SHA-256 검증 실패");
-                int removedDuplicates = replaceInTree(info.fileName, temp);
+                long installedBytes = replaceInTree(info.fileName, temp);
                 runOnUiThread(() -> {
-                    statusText.setText(removedDuplicates > 0
-                        ? "업데이트 완료. 구버전 중복 파일 " + removedDuplicates + "개를 정리했습니다. Geode를 다시 실행하세요."
-                        : "업데이트 완료. Geode Launcher를 다시 실행하세요.");
+                    statusText.setText("업데이트 완료: " + info.fileName + " (" + installedBytes + " bytes)\n"
+                        + EXPECTED_TREE_ID + "\nGeode Launcher를 완전히 종료한 뒤 다시 실행하세요.");
                     updateButton.setText("업데이트 확인"); updateButton.setEnabled(true); latest = null;
                     Toast.makeText(this, "dim5lBOT " + info.version + " 업데이트 완료", Toast.LENGTH_LONG).show();
                 });
@@ -347,6 +365,7 @@ public class MainActivity extends Activity {
     }
 
     private Uri findChild(String fileName) throws Exception {
+        requireCorrectModsFolder();
         String treeId = DocumentsContract.getTreeDocumentId(modsTree);
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(modsTree, treeId);
         try (Cursor c = getContentResolver().query(children,
@@ -359,8 +378,9 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private int replaceInTree(String fileName, File source) throws Exception {
+    private long replaceInTree(String fileName, File source) throws Exception {
         ContentResolver resolver = getContentResolver();
+        requireCorrectModsFolder();
         Uri target = findChild(fileName);
         if (target == null) {
             String treeId = DocumentsContract.getTreeDocumentId(modsTree);
@@ -389,48 +409,26 @@ public class MainActivity extends Activity {
             written = sha256(in);
         }
         if (!expected.equals(written)) throw new Exception("모드 파일 쓰기 검증 실패");
-        return removeDuplicateDim5lBotFiles(fileName);
+        Uri verifiedTarget = findChild(fileName);
+        if (verifiedTarget == null) throw new Exception("저장 후 mods 폴더에서 파일을 찾을 수 없습니다.");
+        long size = querySize(verifiedTarget);
+        if (size != source.length()) throw new Exception("저장 크기 불일치: " + size + " / " + source.length());
+        return size;
     }
 
-    private int removeDuplicateDim5lBotFiles(String installedFileName) throws Exception {
-        String treeId = DocumentsContract.getTreeDocumentId(modsTree);
-        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(modsTree, treeId);
-        List<Uri> duplicates = new ArrayList<>();
-        try (Cursor c = getContentResolver().query(children,
-            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME},
-            null, null, null)) {
-            if (c == null) return 0;
-            while (c.moveToNext()) {
-                String documentId = c.getString(0);
-                String name = c.getString(1);
-                if (name == null || name.equals(installedFileName) || !name.toLowerCase(Locale.ROOT).endsWith(".geode")) continue;
-                Uri candidate = DocumentsContract.buildDocumentUriUsingTree(modsTree, documentId);
-                if (isDim5lBotPackage(candidate)) duplicates.add(candidate);
-            }
+    private void requireCorrectModsFolder() throws Exception {
+        if (modsTree == null) throw new Exception("mods 폴더가 선택되지 않았습니다.");
+        String selectedId = DocumentsContract.getTreeDocumentId(modsTree);
+        if (!EXPECTED_TREE_ID.equals(selectedId))
+            throw new Exception("잘못된 폴더: " + selectedId);
+    }
+
+    private long querySize(Uri file) throws Exception {
+        try (Cursor c = getContentResolver().query(file,
+            new String[]{DocumentsContract.Document.COLUMN_SIZE}, null, null, null)) {
+            if (c == null || !c.moveToFirst() || c.isNull(0)) throw new Exception("설치 파일 크기를 확인할 수 없습니다.");
+            return c.getLong(0);
         }
-        int removed = 0;
-        for (Uri duplicate : duplicates)
-            if (DocumentsContract.deleteDocument(getContentResolver(), duplicate)) removed++;
-        return removed;
-    }
-
-    private boolean isDim5lBotPackage(Uri file) {
-        try (InputStream raw = getContentResolver().openInputStream(file);
-             ZipInputStream zip = new ZipInputStream(raw)) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                if (!"mod.json".equals(entry.getName())) continue;
-                ByteArrayOutputStream jsonBytes = new ByteArrayOutputStream();
-                byte[] buffer = new byte[4096]; int count; int total = 0;
-                while ((count = zip.read(buffer)) != -1 && total < 65536) {
-                    int accepted = Math.min(count, 65536 - total);
-                    jsonBytes.write(buffer, 0, accepted); total += accepted;
-                }
-                JSONObject json = new JSONObject(new String(jsonBytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8));
-                return "lxdim5lxl.dim5lbot".equals(json.optString("id"));
-            }
-        } catch (Exception ignored) { }
-        return false;
     }
 
     private String sha256(InputStream in) throws Exception {
