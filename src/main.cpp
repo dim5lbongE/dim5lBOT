@@ -59,6 +59,7 @@ struct Engine {
     bool noclip = false;
     bool assistedSession = false;
     bool pendingDeathCheck = false;
+    bool levelCompletionInProgress = false;
     float speedMultiplier = 1.f;
     std::string message = "Ready";
 
@@ -88,6 +89,7 @@ struct Engine {
         playAfterReset = false;
         replaySessionActive = false;
         pendingDeathCheck = false;
+        levelCompletionInProgress = false;
         message = "Recording";
     }
 
@@ -873,11 +875,13 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         // pause transitions can emit a synthetic destroyPlayer call. A normal
         // recording is failed only when a real dead player triggers a reset.
         auto discardRecording = engine.pendingDeathCheck &&
+            !engine.levelCompletionInProgress &&
             engine.mode == dimbot::Mode::Recording &&
             !m_isPaused && !m_isPracticeMode &&
             ((m_player1 && m_player1->m_isDead) ||
              (m_player2 && m_player2->m_isDead));
         engine.pendingDeathCheck = false;
+        engine.levelCompletionInProgress = false;
         if (discardRecording) engine.discardFailedRecording();
 
         engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
@@ -911,6 +915,10 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void levelComplete() {
         auto& engine = dimbot::Engine::get();
+        // Completion can emit death/reset callbacks while the end screen is
+        // being created. Preserve the finished recording through that reset.
+        engine.levelCompletionInProgress = true;
+        engine.pendingDeathCheck = false;
         if (engine.safeMode && (engine.replaySessionActive || engine.assistedSession)) {
             engine.stop("Safe Mode blocked replay completion");
             PlayLayer::resetLevel();
