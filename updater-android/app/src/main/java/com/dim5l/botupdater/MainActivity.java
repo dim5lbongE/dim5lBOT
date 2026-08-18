@@ -32,9 +32,13 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
     private static final int PICK_MODS_FOLDER = 4101;
@@ -310,9 +314,11 @@ public class MainActivity extends Activity {
                 try (FileOutputStream out = new FileOutputStream(temp)) { out.write(bytes); }
                 String actual = sha256(new FileInputStream(temp));
                 if (!info.sha256.equals(actual)) throw new Exception("SHA-256 검증 실패");
-                replaceInTree(info.fileName, temp);
+                int removedDuplicates = replaceInTree(info.fileName, temp);
                 runOnUiThread(() -> {
-                    statusText.setText("업데이트 완료. Geode Launcher를 다시 실행하세요.");
+                    statusText.setText(removedDuplicates > 0
+                        ? "업데이트 완료. 구버전 중복 파일 " + removedDuplicates + "개를 정리했습니다. Geode를 다시 실행하세요."
+                        : "업데이트 완료. Geode Launcher를 다시 실행하세요.");
                     updateButton.setText("업데이트 확인"); updateButton.setEnabled(true); latest = null;
                     Toast.makeText(this, "dim5lBOT " + info.version + " 업데이트 완료", Toast.LENGTH_LONG).show();
                 });
@@ -353,7 +359,7 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private void replaceInTree(String fileName, File source) throws Exception {
+    private int replaceInTree(String fileName, File source) throws Exception {
         ContentResolver resolver = getContentResolver();
         Uri target = findChild(fileName);
         if (target == null) {
@@ -383,6 +389,48 @@ public class MainActivity extends Activity {
             written = sha256(in);
         }
         if (!expected.equals(written)) throw new Exception("모드 파일 쓰기 검증 실패");
+        return removeDuplicateDim5lBotFiles(fileName);
+    }
+
+    private int removeDuplicateDim5lBotFiles(String installedFileName) throws Exception {
+        String treeId = DocumentsContract.getTreeDocumentId(modsTree);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(modsTree, treeId);
+        List<Uri> duplicates = new ArrayList<>();
+        try (Cursor c = getContentResolver().query(children,
+            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME},
+            null, null, null)) {
+            if (c == null) return 0;
+            while (c.moveToNext()) {
+                String documentId = c.getString(0);
+                String name = c.getString(1);
+                if (name == null || name.equals(installedFileName) || !name.toLowerCase(Locale.ROOT).endsWith(".geode")) continue;
+                Uri candidate = DocumentsContract.buildDocumentUriUsingTree(modsTree, documentId);
+                if (isDim5lBotPackage(candidate)) duplicates.add(candidate);
+            }
+        }
+        int removed = 0;
+        for (Uri duplicate : duplicates)
+            if (DocumentsContract.deleteDocument(getContentResolver(), duplicate)) removed++;
+        return removed;
+    }
+
+    private boolean isDim5lBotPackage(Uri file) {
+        try (InputStream raw = getContentResolver().openInputStream(file);
+             ZipInputStream zip = new ZipInputStream(raw)) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if (!"mod.json".equals(entry.getName())) continue;
+                ByteArrayOutputStream jsonBytes = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096]; int count; int total = 0;
+                while ((count = zip.read(buffer)) != -1 && total < 65536) {
+                    int accepted = Math.min(count, 65536 - total);
+                    jsonBytes.write(buffer, 0, accepted); total += accepted;
+                }
+                JSONObject json = new JSONObject(new String(jsonBytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8));
+                return "lxdim5lxl.dim5lbot".equals(json.optString("id"));
+            }
+        } catch (Exception ignored) { }
+        return false;
     }
 
     private String sha256(InputStream in) throws Exception {
