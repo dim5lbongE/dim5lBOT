@@ -804,6 +804,7 @@ protected:
         auto& engine = Engine::get();
         engine.stop();
         engine.inputs.clear();
+        engine.frameFixes.clear();
         engine.frame = 0;
         engine.replayEndFrame = 0;
         engine.playbackIndex = 0;
@@ -932,25 +933,53 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         auto& engine = dimbot::Engine::get();
+
+        // xdBot processes the vanilla command/physics step first, then applies
+        // the macro action for the numbered command tick.
+        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+
+        if (engine.mode != dimbot::Mode::Recording && engine.mode != dimbot::Mode::Playing)
+            return;
+
         auto frame = dimbot::currentGameFrame();
         engine.frame = frame;
 
-        // Apply recorded input before this tick's physics, matching the order in
-        // which a live input reaches Geometry Dash's command processor.
-        if (engine.mode == dimbot::Mode::Playing) {
-            engine.injecting = true;
-            while (engine.playbackIndex < engine.inputs.size() &&
-                   engine.inputs[engine.playbackIndex].frame <= frame) {
-                auto const input = engine.inputs[engine.playbackIndex++];
-                GJBaseGameLayer::handleButton(input.down, input.button, input.player1);
-            }
-            engine.injecting = false;
+        // A rendered frame may visit processCommands more than once. Never
+        // consume the same macro tick twice.
+        if (engine.previousProcessedFrame == frame) return;
+        engine.previousProcessedFrame = frame;
+
+        if (engine.mode == dimbot::Mode::Recording) {
+            engine.replayEndFrame = std::max(engine.replayEndFrame, frame);
+            return;
         }
 
-        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+        engine.injecting = true;
+        while (engine.playbackIndex < engine.inputs.size() &&
+               engine.inputs[engine.playbackIndex].frame <= frame) {
+            auto const input = engine.inputs[engine.playbackIndex++];
+            GJBaseGameLayer::handleButton(input.down, input.button, input.player1);
+        }
+        engine.injecting = false;
 
-        if (engine.mode == dimbot::Mode::Playing &&
-            engine.playbackIndex >= engine.inputs.size() && frame > engine.replayEndFrame)
+        // xdBot Input Fixes: restore the player transform captured at the
+        // corresponding input before the following physics tick runs.
+        while (engine.frameFixIndex < engine.frameFixes.size() &&
+               engine.frameFixes[engine.frameFixIndex].frame <= frame) {
+            auto const& fix = engine.frameFixes[engine.frameFixIndex++];
+            if (m_player1) {
+                m_player1->setPosition({fix.player1.x, fix.player1.y});
+                m_player1->setRotation(fix.player1.rotation);
+            }
+            if (m_player2 && m_gameState.m_isDualMode) {
+                m_player2->setPosition({fix.player2.x, fix.player2.y});
+                m_player2->setRotation(fix.player2.rotation);
+            }
+        }
+
+        if (engine.playbackIndex >= engine.inputs.size() &&
+            engine.frameFixIndex >= engine.frameFixes.size() &&
+            frame > engine.replayEndFrame)
             engine.finishPlayback();
     }
 
@@ -958,14 +987,15 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         auto& engine = dimbot::Engine::get();
         if (engine.mode == dimbot::Mode::Playing && !engine.injecting) return;
 
-        // In GD 2.2081 all real gameplay inputs pass through GJBaseGameLayer,
-        // not PlayLayer. The stored bool keeps the original API value so P1/P2
-        // playback is identical to recording.
-        // processCommands owns the stable 240 TPS frame clock. Inputs occurring
-        // between ticks stay attached to the tick that will process them.
-        if (engine.mode != dimbot::Mode::Recording)
-            engine.frame = dimbot::currentGameFrame();
-        engine.record(down, button, player2);
+        if (engine.mode == dimbot::Mode::Recording && !engine.injecting) {
+            auto frame = dimbot::currentGameFrame();
+            engine.frame = frame;
+            // Capture the exact transform immediately before the live input,
+            // matching xdBot's Input Fixes recording order.
+            engine.recordFrameFix(frame, m_player1, m_player2);
+            engine.record(down, button, player2);
+        }
+
         GJBaseGameLayer::handleButton(down, button, player2);
     }
 };
