@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
@@ -13,7 +15,9 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -57,52 +61,130 @@ public class MainActivity extends Activity {
     }
 
     private void buildUi() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(24), dp(44), dp(24), dp(24));
-        root.setBackgroundColor(Color.rgb(23, 17, 44));
+        root.setPadding(dp(22), dp(34), dp(22), dp(30));
+        root.setBackgroundColor(Color.rgb(11, 5, 38));
 
-        TextView title = text("dim5lBOT", 30, Color.WHITE);
-        title.setTypeface(null, 1);
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(com.dim5l.botupdater.R.drawable.dim5lbot_update_logo);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(-1, dp(154));
+        logoParams.setMargins(0, 0, 0, dp(12));
+        logo.setLayoutParams(logoParams);
+        root.addView(logo);
+
+        TextView title = text("dim5lBOT Updater", 29, Color.WHITE);
+        title.setGravity(Gravity.CENTER);
+        title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         root.addView(title);
-        TextView subtitle = text("AUTOMATIC UPDATER", 13, Color.rgb(211, 188, 255));
-        subtitle.setPadding(0, 0, 0, dp(28));
+        TextView subtitle = text("빠르고 안전한 자동 업데이트", 14, Color.rgb(193, 181, 238));
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(0, dp(5), 0, dp(24));
         root.addView(subtitle);
 
+        LinearLayout updateCard = card();
+        TextView cardLabel = text("UPDATE STATUS", 11, Color.rgb(168, 148, 235));
+        cardLabel.setTypeface(Typeface.DEFAULT_BOLD);
+        updateCard.addView(cardLabel);
         folderText = text("", 14, Color.LTGRAY);
-        root.addView(folderText);
-        root.addView(button("Geode mods 폴더 선택", v -> chooseFolder()));
+        folderText.setPadding(0, dp(12), 0, 0);
+        updateCard.addView(folderText);
 
         versionText = text("버전 확인 전", 18, Color.WHITE);
-        versionText.setPadding(0, dp(28), 0, dp(10));
-        root.addView(versionText);
+        versionText.setTypeface(Typeface.DEFAULT_BOLD);
+        versionText.setPadding(0, dp(14), 0, dp(7));
+        updateCard.addView(versionText);
         statusText = text("업데이트 정보를 확인합니다.", 14, Color.rgb(180, 195, 230));
-        statusText.setPadding(0, 0, 0, dp(20));
-        root.addView(statusText);
+        statusText.setPadding(0, 0, 0, dp(14));
+        updateCard.addView(statusText);
 
         updateButton = button("업데이트 확인", v -> {
             if (latest == null) checkForUpdates(false); else installLatest();
         });
-        root.addView(updateButton);
+        updateButton.setBackground(rounded(Color.rgb(225, 20, 52), 14));
+        updateButton.setTextColor(Color.WHITE);
+        updateButton.setTypeface(Typeface.DEFAULT_BOLD);
+        updateCard.addView(updateButton);
+        Button folderButton = button("Geode mods 폴더 연결", v -> chooseFolder());
+        folderButton.setBackground(rounded(Color.rgb(52, 37, 103), 14));
+        folderButton.setTextColor(Color.WHITE);
+        updateCard.addView(folderButton);
+        root.addView(updateCard);
 
-        TextView hint = text(
-            "처음 한 번만 Android/media/com.geode.launcher/game/geode/mods 폴더를 선택하세요. 이후 앱을 열면 자동으로 최신 버전을 확인합니다.",
-            12, Color.rgb(145, 145, 175));
-        hint.setPadding(0, dp(30), 0, 0);
-        root.addView(hint);
-        setContentView(root);
+        TextView guideTitle = text("처음 사용하는 방법", 19, Color.WHITE);
+        guideTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        guideTitle.setPadding(dp(2), dp(28), 0, dp(12));
+        root.addView(guideTitle);
+        LinearLayout guide = card();
+        guide.addView(step("1", "폴더 연결", "Geode mods 폴더를 처음 한 번만 선택하세요."));
+        guide.addView(step("2", "업데이트 확인", "앱을 열면 최신 dim5lBOT 버전을 자동 확인합니다."));
+        guide.addView(step("3", "Geode 재실행", "설치 완료 후 Geode Launcher를 다시 실행하세요."));
+        root.addView(guide);
+
+        TextView path = text("권장 폴더\nAndroid/media/com.geode.launcher/game/geode/mods", 12, Color.rgb(145, 137, 179));
+        path.setGravity(Gravity.CENTER);
+        path.setPadding(0, dp(22), 0, 0);
+        root.addView(path);
+        scroll.addView(root);
+        setContentView(scroll);
+    }
+
+    private LinearLayout card() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(20), dp(20), dp(20), dp(20));
+        card.setBackground(rounded(Color.rgb(27, 18, 63), 22));
+        card.setElevation(dp(3));
+        card.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        return card;
+    }
+
+    private LinearLayout step(String number, String heading, String body) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.TOP);
+        row.setPadding(0, dp(8), 0, dp(8));
+        TextView badge = text(number, 14, Color.WHITE);
+        badge.setGravity(Gravity.CENTER);
+        badge.setTypeface(Typeface.DEFAULT_BOLD);
+        badge.setBackground(rounded(Color.rgb(225, 20, 52), 12));
+        badge.setLayoutParams(new LinearLayout.LayoutParams(dp(32), dp(32)));
+        row.addView(badge);
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.setPadding(dp(14), 0, 0, 0);
+        TextView h = text(heading, 15, Color.WHITE);
+        h.setTypeface(Typeface.DEFAULT_BOLD);
+        copy.addView(h);
+        TextView b = text(body, 13, Color.rgb(190, 185, 211));
+        b.setPadding(0, dp(3), 0, 0);
+        copy.addView(b);
+        row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        return row;
+    }
+
+    private GradientDrawable rounded(int color, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radiusDp));
+        return drawable;
     }
 
     private TextView text(String value, int sp, int color) {
         TextView view = new TextView(this);
         view.setText(value); view.setTextSize(sp); view.setTextColor(color);
-        view.setLineSpacing(0, 1.15f);
+        view.setFontFeatureSettings("kern");
+        view.setLineSpacing(0, 1.18f);
         return view;
     }
 
     private Button button(String value, View.OnClickListener listener) {
         Button button = new Button(this);
-        button.setText(value); button.setAllCaps(false); button.setOnClickListener(listener);
+        button.setText(value); button.setTextSize(15); button.setAllCaps(false); button.setOnClickListener(listener);
+        button.setStateListAnimator(null);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(52));
         p.setMargins(0, dp(10), 0, 0); button.setLayoutParams(p);
         return button;
