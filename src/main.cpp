@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -30,12 +31,27 @@ struct Input {
     bool player1 = true;
 };
 
+struct PlayerFix {
+    float x = 0.f;
+    float y = 0.f;
+    float rotation = 0.f;
+};
+
+struct FrameFix {
+    uint64_t frame = 0;
+    PlayerFix player1;
+    PlayerFix player2;
+};
+
 struct Engine {
     Mode mode = Mode::Idle;
     std::vector<Input> inputs;
+    std::vector<FrameFix> frameFixes;
     uint64_t frame = 0;
     uint64_t replayEndFrame = 0;
+    uint64_t previousProcessedFrame = std::numeric_limits<uint64_t>::max();
     size_t playbackIndex = 0;
+    size_t frameFixIndex = 0;
     bool injecting = false;
     bool playAfterReset = false;
     bool replaySessionActive = false;
@@ -65,6 +81,9 @@ struct Engine {
         frame = 0;
         replayEndFrame = 0;
         playbackIndex = 0;
+        frameFixIndex = 0;
+        previousProcessedFrame = std::numeric_limits<uint64_t>::max();
+        frameFixes.clear();
         mode = Mode::Recording;
         playAfterReset = false;
         replaySessionActive = false;
@@ -80,6 +99,8 @@ struct Engine {
         mode = Mode::Idle;
         frame = 0;
         playbackIndex = 0;
+        frameFixIndex = 0;
+        previousProcessedFrame = std::numeric_limits<uint64_t>::max();
         playAfterReset = true;
         message = "Preparing replay";
     }
@@ -87,6 +108,8 @@ struct Engine {
     void beginPlaybackAfterReset() {
         frame = 0;
         playbackIndex = 0;
+        frameFixIndex = 0;
+        previousProcessedFrame = std::numeric_limits<uint64_t>::max();
         playAfterReset = false;
         replaySessionActive = true;
         mode = Mode::Playing;
@@ -144,9 +167,25 @@ struct Engine {
         inputs.push_back(next);
     }
 
+    void recordFrameFix(uint64_t atFrame, PlayerObject* p1, PlayerObject* p2) {
+        if (mode != Mode::Recording || !p1 || !p2) return;
+        auto normalize = [](float rotation) {
+            rotation = std::fmod(rotation, 360.f);
+            return rotation < 0.f ? rotation + 360.f : rotation;
+        };
+        FrameFix fix;
+        fix.frame = atFrame;
+        fix.player1 = {p1->getPositionX(), p1->getPositionY(), normalize(p1->getRotation())};
+        fix.player2 = {p2->getPositionX(), p2->getPositionY(), normalize(p2->getRotation())};
+        frameFixes.push_back(fix);
+    }
+
     void trimToFrame(uint64_t targetFrame) {
         std::erase_if(inputs, [targetFrame](Input const& input) {
             return input.frame >= targetFrame;
+        });
+        std::erase_if(frameFixes, [targetFrame](FrameFix const& fix) {
+            return fix.frame >= targetFrame;
         });
         frame = targetFrame;
         replayEndFrame = targetFrame;
@@ -159,6 +198,8 @@ struct Engine {
         frame = 0;
         replayEndFrame = 0;
         playbackIndex = 0;
+        frameFixIndex = 0;
+        frameFixes.clear();
     }
 };
 
@@ -166,7 +207,9 @@ uint64_t currentGameFrame() {
     auto layer = PlayLayer::get();
     if (!layer) return 0;
     auto time = std::max(0.0, static_cast<double>(layer->m_gameState.m_levelTime));
-    return static_cast<uint64_t>(std::llround(time * 240.0));
+    // Match xdBot's clock: truncate the level-time product and address the
+    // command tick that is about to receive the input.
+    return static_cast<uint64_t>(time * 240.0) + 1;
 }
 
 std::filesystem::path macroDirectory() {
