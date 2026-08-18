@@ -131,10 +131,9 @@ public class MainActivity extends Activity {
         LinearLayout logCard = card();
         logCard.addView(changeLog(
             "v1.1.0", "LATEST",
-            "• Windows · Android64 · macOS 지원\n" +
-            "• xdBot 방식 입력·위치·회전 보정\n" +
-            "• 사망 후 Speedhack 배속 유지\n" +
-            "• 일시정지·클리어 시 녹화 보존"
+            "• macOS 지원\n" +
+            "• 기능 향상\n" +
+            "• 버그 수정"
         ));
         View divider = new View(this);
         divider.setBackgroundColor(Color.rgb(62, 49, 104));
@@ -144,10 +143,7 @@ public class MainActivity extends Activity {
         logCard.addView(divider);
         logCard.addView(changeLog(
             "v1.0.0", "RELEASE",
-            "• dim5lBOT 첫 정식 버전\n" +
-            "• 240 TPS 입력 녹화·재생\n" +
-            "• 매크로 저장·불러오기\n" +
-            "• Speedhack · Noclip · Safe Mode"
+            "• dim5lBOT 첫 정식 버전"
         ));
         root.addView(logCard);
 
