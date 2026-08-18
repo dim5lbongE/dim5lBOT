@@ -306,15 +306,34 @@ public class MainActivity extends Activity {
 
     private void replaceInTree(String fileName, File source) throws Exception {
         ContentResolver resolver = getContentResolver();
-        Uri old = findChild(fileName);
-        if (old != null && !DocumentsContract.deleteDocument(resolver, old)) throw new Exception("기존 파일 삭제 실패");
-        Uri created = DocumentsContract.createDocument(resolver, modsTree, "application/octet-stream", fileName);
-        if (created == null) throw new Exception("새 파일 생성 실패");
-        try (InputStream in = new FileInputStream(source); OutputStream out = resolver.openOutputStream(created, "w")) {
+        Uri target = findChild(fileName);
+        if (target == null) {
+            String treeId = DocumentsContract.getTreeDocumentId(modsTree);
+            Uri parent = DocumentsContract.buildDocumentUriUsingTree(modsTree, treeId);
+            target = DocumentsContract.createDocument(resolver, parent, "application/octet-stream", fileName);
+            if (target == null) throw new Exception("모드 파일을 만들 수 없습니다. mods 폴더를 다시 선택하세요.");
+        }
+
+        OutputStream targetStream;
+        try {
+            targetStream = resolver.openOutputStream(target, "rwt");
+        } catch (java.io.FileNotFoundException unsupportedMode) {
+            targetStream = resolver.openOutputStream(target, "w");
+        }
+        try (InputStream in = new FileInputStream(source); OutputStream out = targetStream) {
             if (out == null) throw new Exception("모드 폴더 쓰기 실패");
             byte[] buffer = new byte[16384]; int count;
             while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+            out.flush();
         }
+
+        String expected = sha256(new FileInputStream(source));
+        String written;
+        try (InputStream in = resolver.openInputStream(target)) {
+            if (in == null) throw new Exception("설치 파일을 다시 읽을 수 없습니다.");
+            written = sha256(in);
+        }
+        if (!expected.equals(written)) throw new Exception("모드 파일 쓰기 검증 실패");
     }
 
     private String sha256(InputStream in) throws Exception {
