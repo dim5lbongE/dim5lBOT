@@ -15,3 +15,5 @@ Windows 10/11용 dim5lBOT 자동 업데이터입니다. 관리자 권한 없이 
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
+
+자동 빌드 결과물은 `dim5lBOT-Updater-Windows` artifact로 생성됩니다.
