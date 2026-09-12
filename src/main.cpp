@@ -3,6 +3,7 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/CCScheduler.hpp>
 #include <Geode/ui/Popup.hpp>
 #include <Geode/ui/TextInput.hpp>
 
@@ -130,7 +131,10 @@ struct Engine {
     }
 
     void applySpeed() {
-        cocos2d::CCScheduler::get()->setTimeScale(speed());
+        // Keep cocos' own time scale neutral. The scheduler hook below applies
+        // the multiplier to every update, so a restart cannot silently reset
+        // the selected speed back to 1x.
+        cocos2d::CCScheduler::get()->setTimeScale(1.f);
         if (PlayLayer::get() && speed() != 1.f) assistedSession = true;
     }
 
@@ -842,6 +846,16 @@ public:
 
 } // namespace dimbot
 
+class $modify(dim5lBotScheduler, CCScheduler) {
+    void update(float dt) {
+        auto& engine = dimbot::Engine::get();
+        auto multiplier = engine.speed();
+        if (multiplier != 1.f && PlayLayer::get())
+            engine.assistedSession = true;
+        CCScheduler::update(dt * multiplier);
+    }
+};
+
 class $modify(dim5lBotPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
@@ -963,6 +977,12 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
 
         if (engine.mode == dimbot::Mode::Recording) {
             engine.replayEndFrame = std::max(engine.replayEndFrame, frame);
+            // Match xdBot's Frame Fixes mode: save a correction on every
+            // 240 TPS command tick, not only when an input happens. Sparse
+            // input-only fixes allow physics drift to accumulate between
+            // clicks and are the main cause of replay desync.
+            if (engine.frameFixes.empty() || engine.frameFixes.back().frame != frame)
+                engine.recordFrameFix(frame, m_player1, m_player2);
             return;
         }
 
