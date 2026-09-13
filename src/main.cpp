@@ -14,6 +14,7 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#include "replay_timeline.hpp"
 
 using namespace geode::prelude;
 
@@ -36,6 +37,8 @@ struct PlayerFix {
     float x = 0.f;
     float y = 0.f;
     float rotation = 0.f;
+    bool valid = true;
+    bool rotate = true;
 };
 
 struct FrameFix {
@@ -61,6 +64,11 @@ struct Engine {
     bool assistedSession = false;
     bool pendingDeathCheck = false;
     bool levelCompletionInProgress = false;
+    bool resetting = false;
+    bool flippedControls = false;
+    ReplayTimeline timeline;
+    int replayLevelId = 0;
+    std::string replayLevelName;
     float speedMultiplier = 1.f;
     std::string message = "Ready";
 
@@ -79,6 +87,7 @@ struct Engine {
     }
 
     void beginRecording() {
+        timeline.reset();
         inputs.clear();
         frame = 0;
         replayEndFrame = 0;
@@ -109,6 +118,7 @@ struct Engine {
     }
 
     void beginPlaybackAfterReset() {
+        timeline.reset();
         frame = 0;
         playbackIndex = 0;
         frameFixIndex = 0;
@@ -161,15 +171,8 @@ struct Engine {
         if (mode != Mode::Recording || injecting) return;
         Input next{frame, down, button, player1};
 
-        // Geometry Dash or another mod can forward the same input twice.
-        // Keep distinct buttons/players, but discard an exact duplicate event.
-        if (!inputs.empty()) {
-            auto const& previous = inputs.back();
-            if (previous.frame == next.frame && previous.down == next.down &&
-                previous.button == next.button && previous.player1 == next.player1) {
-                return;
-            }
-        }
+        // Preserve every accepted event in arrival order, including same-tick
+        // press/release sequences; a repeated callback is not proof of a duplicate.
         inputs.push_back(next);
     }
 
@@ -183,7 +186,9 @@ struct Engine {
         fix.frame = atFrame;
         fix.player1 = {p1->getPositionX(), p1->getPositionY(), normalize(p1->getRotation())};
         fix.player2 = {p2->getPositionX(), p2->getPositionY(), normalize(p2->getRotation())};
-        frameFixes.push_back(fix);
+        if (!frameFixes.empty() && frameFixes.back().frame == atFrame)
+            frameFixes.back() = fix;
+        else frameFixes.push_back(fix);
     }
 
     void trimToFrame(uint64_t targetFrame) {
@@ -234,7 +239,7 @@ std::string sanitizeMacroName(std::string name) {
 }
 
 std::filesystem::path macroPath(std::string const& name) {
-    return macroDirectory() / (sanitizeMacroName(name) + ".json");
+    return macroDirectory() / (sanitizeMacroName(name) + ".gdr.json");
 }
 
 std::vector<std::filesystem::path> listMacros() {
@@ -263,10 +268,25 @@ Result<> saveMacro(std::string const& requestedName) {
 
     matjson::Value root = matjson::Value::object();
     root["format"] = "dim5lbot-replay";
-    root["version"] = 2;
+    root["version"] = 1.0;
     root["tps"] = 240;
-    root["accuracy"] = "input-fixes";
-    root["gameVersion"] = "2.2081";
+    root["accuracy"] = "frame-fixes";
+    root["gameVersion"] = 2.2081;
+    root["framerate"] = 240.0;
+    root["bot"] = matjson::Value::object();
+    root["bot"]["name"] = "dim5lBOT";
+    root["bot"]["version"] = "v1.2.0";
+    root["duration"] = engine.replayEndFrame / 240.0;
+    root["description"] = "Frame Fixes; GD 2.2081; 240 TPS";
+    root["author"] = "";
+    root["seed"] = 0;
+    root["coins"] = 0;
+    root["ldm"] = false;
+    root["dim5lSchema"] = 3;
+    root["flippedControls"] = engine.flippedControls;
+    root["level"] = matjson::Value::object();
+    root["level"]["id"] = engine.replayLevelId;
+    root["level"]["name"] = engine.replayLevelName;
     root["totalFrames"] = static_cast<double>(engine.replayEndFrame);
 
     matjson::Value inputs = matjson::Value::array();
@@ -276,6 +296,8 @@ Result<> saveMacro(std::string const& requestedName) {
         item["down"] = input.down;
         item["button"] = input.button;
         item["player1"] = input.player1;
+        item["btn"] = input.button;
+        item["2p"] = input.player1;
         inputs.push(std::move(item));
     }
     root["inputs"] = std::move(inputs);
@@ -290,19 +312,48 @@ Result<> saveMacro(std::string const& requestedName) {
         item["p2x"] = fix.player2.x;
         item["p2y"] = fix.player2.y;
         item["p2r"] = fix.player2.rotation;
+        item["p1"] = matjson::Value::object();
+        item["p2"] = matjson::Value::object();
+        item["p1"]["x"] = fix.player1.x;
+        item["p1"]["y"] = fix.player1.y;
+        item["p1"]["r"] = fix.player1.rotation;
+        item["p2"]["x"] = fix.player2.x;
+        item["p2"]["y"] = fix.player2.y;
+        item["p2"]["r"] = fix.player2.rotation;
         fixes.push(std::move(item));
     }
     root["frameFixes"] = std::move(fixes);
 
     root["name"] = name;
-    std::ofstream stream(macroPath(name), std::ios::binary | std::ios::trunc);
+    auto destination = macroPath(name);
+    auto temporary = destination;
+    temporary += ".tmp";
+    auto backup = destination;
+    backup += ".bak";
+    if (std::filesystem::exists(backup)) return Err("Recovery backup exists; keep it before saving again");
+    std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
     if (!stream) return Err("Could not open the replay file");
     stream << root.dump(2);
+    stream.flush();
     if (!stream.good()) return Err("Could not write the replay file");
+    stream.close();
+    if (stream.fail()) return Err("Could not close the replay file");
+    bool existed = std::filesystem::exists(destination);
+    if (existed) {
+        std::filesystem::rename(destination, backup, error);
+        if (error) return Err("Could not back up previous replay: {}", error.message());
+    }
+    std::filesystem::rename(temporary, destination, error);
+    if (error) {
+        std::error_code rollback;
+        if (existed) std::filesystem::rename(backup, destination, rollback);
+        return Err("Save failed; previous data retained: {}", error.message());
+    }
+    if (existed) std::filesystem::remove(backup, error);
     return Ok();
 }
 
-Result<> loadMacro(std::filesystem::path const& path) {
+Result<> loadMacro(std::filesystem::path const& path) try {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) return Err("No saved replay found");
 
@@ -316,18 +367,27 @@ Result<> loadMacro(std::filesystem::path const& path) {
     if (!root.isObject() || !root["inputs"].isArray()) {
         return Err("Unsupported replay format");
     }
+    const bool gdr = root["framerate"].isNumber();
+    auto rate = (gdr ? root["framerate"] : root["tps"]).asDouble();
+    if (rate.isErr() || rate.unwrap() != 240.0)
+        return Err("Only 240 TPS replays are supported; no silent timing conversion");
+    if (gdr && root["bot"]["name"].asString().unwrapOr("") == "xdBot") {
+        auto version = root["bot"]["version"].asString().unwrapOr("");
+        if (version != "v2.3.11" && version != "v2.4.1" && version != "2.4.1")
+            return Err("This xdBot version needs an explicit frame-offset adapter");
+    }
 
     std::vector<Input> loaded;
     uint64_t lastFrame = 0;
     for (auto const& item : root["inputs"]) {
         auto frame = item["frame"].asDouble();
         auto down = item["down"].asBool();
-        auto button = item["button"].asInt();
-        auto player1 = item["player1"].asBool();
+        auto button = (gdr ? item["btn"] : item["button"]).asInt();
+        auto player1 = (gdr ? item["2p"] : item["player1"]).asBool();
         if (frame.isErr() || down.isErr() || button.isErr() || player1.isErr()) {
             return Err("Replay contains a malformed input");
         }
-        auto frameNumber = static_cast<uint64_t>(std::max(0.0, frame.unwrap()));
+        auto frameNumber = checkedReplayFrame(frame.unwrap());
         auto buttonNumber = static_cast<int>(button.unwrap());
         if (buttonNumber < 1 || buttonNumber > 3) {
             return Err("Replay contains an unsupported button");
@@ -343,6 +403,28 @@ Result<> loadMacro(std::filesystem::path const& path) {
     std::vector<FrameFix> loadedFixes;
     if (root["frameFixes"].isArray()) {
         for (auto const& item : root["frameFixes"]) {
+            if (gdr) {
+                FrameFix fix;
+                auto tick = item["frame"].asDouble();
+                if (tick.isErr()) return Err("Correction frame is missing or invalid");
+                fix.frame = checkedReplayFrame(tick.unwrap());
+                auto readPlayer = [](matjson::Value const& value) {
+                    PlayerFix p;
+                    p.valid = value.isObject();
+                    p.rotate = value["r"].isNumber();
+                    p.x = value["x"].asDouble().unwrapOr(0.0);
+                    p.y = value["y"].asDouble().unwrapOr(0.0);
+                    p.rotation = value["r"].asDouble().unwrapOr(0.0);
+                    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.rotation))
+                        throw std::invalid_argument("Non-finite correction");
+                    return p;
+                };
+                fix.player1 = readPlayer(item["p1"]);
+                fix.player2 = readPlayer(item["p2"]);
+                loadedFixes.push_back(fix);
+                lastFrame = std::max(lastFrame, fix.frame);
+                continue;
+            }
             auto frame = item["frame"].asDouble();
             auto p1x = item["p1x"].asDouble();
             auto p1y = item["p1y"].asDouble();
@@ -355,7 +437,7 @@ Result<> loadMacro(std::filesystem::path const& path) {
                 return Err("Replay contains a malformed frame fix");
             }
             FrameFix fix;
-            fix.frame = static_cast<uint64_t>(std::max(0.0, frame.unwrap()));
+            fix.frame = checkedReplayFrame(frame.unwrap());
             fix.player1 = {
                 static_cast<float>(p1x.unwrap()), static_cast<float>(p1y.unwrap()),
                 static_cast<float>(p1r.unwrap())
@@ -372,24 +454,30 @@ Result<> loadMacro(std::filesystem::path const& path) {
         });
     }
 
+    auto totalFrames = root["totalFrames"].asDouble();
+    auto endFrame = totalFrames.isOk()
+        ? checkedReplayFrame(totalFrames.unwrap())
+        : lastFrame;
     auto& engine = Engine::get();
     engine.stop();
     engine.inputs = std::move(loaded);
     engine.frameFixes = std::move(loadedFixes);
-    auto totalFrames = root["totalFrames"].asDouble();
-    engine.replayEndFrame = totalFrames.isOk()
-        ? static_cast<uint64_t>(std::max(0.0, totalFrames.unwrap()))
-        : lastFrame;
-    engine.replayEndFrame = std::max(engine.replayEndFrame, lastFrame);
+    engine.replayEndFrame = std::max(endFrame, lastFrame);
     engine.frame = 0;
     engine.playbackIndex = 0;
     engine.frameFixIndex = 0;
     engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
+    engine.timeline.reset();
+    engine.flippedControls = root["flippedControls"].asBool().unwrapOr(false);
+    engine.replayLevelId = root["level"]["id"].asInt().unwrapOr(0);
+    engine.replayLevelName = root["level"]["name"].asString().unwrapOr("");
     engine.message = fmt::format(
         "Loaded {} ({} inputs, {} fixes)",
         path.stem().string(), engine.inputs.size(), engine.frameFixes.size()
     );
     return Ok();
+} catch (std::exception const& error) {
+    return Err("Invalid replay: {}", error.what());
 }
 
 std::string stateText() {
@@ -774,7 +862,19 @@ protected:
             Engine::get().message = "Enter a level first";
             return;
         }
+        auto layer = PlayLayer::get();
+        if (layer->m_isPracticeMode) {
+            Engine::get().message = "Use normal mode for deterministic recording";
+            return;
+        }
         Engine::get().beginRecording();
+        Engine::get().flippedControls = false;
+        Engine::get().replayLevelId = layer->m_level->m_levelID.value();
+        Engine::get().replayLevelName = layer->m_level->m_levelName;
+        layer->resetLevelFromStart();
+        auto pauseLayer = m_pauseLayer;
+        onClose(nullptr);
+        if (pauseLayer) pauseLayer->onResume(nullptr);
     }
 
     void onStop(CCObject*) {
@@ -787,9 +887,18 @@ protected:
             Engine::get().message = "Enter a level first";
             return;
         }
+        if (layer->m_isPracticeMode) {
+            Engine::get().message = "Use normal mode for deterministic playback";
+            return;
+        }
+        if (Engine::get().replayLevelId > 0 &&
+            Engine::get().replayLevelId != layer->m_level->m_levelID.value()) {
+            Engine::get().message = "Replay belongs to a different level";
+            return;
+        }
         Engine::get().requestPlayback();
         if (Engine::get().playAfterReset) {
-            layer->resetLevel();
+            layer->resetLevelFromStart();
         }
         auto pauseLayer = m_pauseLayer;
         onClose(nullptr);
@@ -884,7 +993,8 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void resetLevel() {
         auto& engine = dimbot::Engine::get();
-        auto startPlayback = engine.playAfterReset;
+        auto startPlayback = engine.playAfterReset || engine.mode == dimbot::Mode::Playing;
+        engine.resetting = true;
 
         // Never discard a recording directly from destroyPlayer/postUpdate:
         // pause transitions can emit a synthetic destroyPlayer call. A normal
@@ -898,11 +1008,19 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         engine.pendingDeathCheck = false;
         // Keep completion protection alive for the entire end-screen lifecycle.
         // Geometry Dash may invoke resetLevel more than once after a clear.
-        if (discardRecording) engine.discardFailedRecording();
+        // Like xdBot, Record stays enabled across normal retries. Clear the
+        // old attempt before the reset so tick numbers cannot overlap.
+        if ((discardRecording || engine.mode == dimbot::Mode::Recording) &&
+            !m_isPracticeMode && !engine.levelCompletionInProgress)
+            engine.beginRecording();
 
         engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
         if (!startPlayback) engine.frameFixIndex = 0;
         PlayLayer::resetLevel();
+        engine.resetting = false;
+        engine.timeline.reset();
+        if (m_player1) m_player1->releaseAllButtons();
+        if (m_player2) m_player2->releaseAllButtons();
         // Geometry Dash resets the scheduler time scale during a death restart.
         // Restore the user's selected multiplier after every level reset.
         engine.applySpeed();
@@ -963,6 +1081,9 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         // xdBot processes the vanilla command/physics step first, then applies
         // the macro action for the numbered command tick.
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+        auto pl = PlayLayer::get();
+        if (!pl || pl != this || engine.resetting || m_levelEndAnimationStarted ||
+            !m_player1 || m_player1->m_isDead) return;
 
         if (engine.mode != dimbot::Mode::Recording && engine.mode != dimbot::Mode::Playing)
             return;
@@ -972,26 +1093,31 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
 
         // A rendered frame may visit processCommands more than once. Never
         // consume the same macro tick twice.
-        if (engine.previousProcessedFrame == frame) return;
+        if (engine.timeline.previous != std::numeric_limits<uint64_t>::max() &&
+            frame < engine.timeline.previous) {
+            engine.stop("Unexpected rewind; restart the replay from the beginning");
+            return;
+        }
+        if (!engine.timeline.enter(frame)) return;
         engine.previousProcessedFrame = frame;
 
         if (engine.mode == dimbot::Mode::Recording) {
             engine.replayEndFrame = std::max(engine.replayEndFrame, frame);
-            // Match xdBot's Frame Fixes mode: save a correction on every
-            // 240 TPS command tick, not only when an input happens. Sparse
-            // input-only fixes allow physics drift to accumulate between
-            // clicks and are the main cause of replay desync.
-            if (engine.frameFixes.empty() || engine.frameFixes.back().frame != frame)
+            // Frame Fixes mode samples after command processing, independently
+            // of input callbacks. Do not mix it with Input Fixes sampling.
+            if (!engine.inputs.empty())
                 engine.recordFrameFix(frame, m_player1, m_player2);
             return;
         }
 
         engine.injecting = true;
-        while (engine.playbackIndex < engine.inputs.size() &&
-               engine.inputs[engine.playbackIndex].frame <= frame) {
-            auto const input = engine.inputs[engine.playbackIndex++];
-            GJBaseGameLayer::handleButton(input.down, input.button, input.player1);
-        }
+        dimbot::ReplayTimeline::drain(engine.inputs, engine.playbackIndex, frame,
+            [&](dimbot::Input const& input) {
+                bool flipped = !m_levelSettings->m_platformerMode && GameManager::get()->getGameVariable("0010");
+                auto side = input.player1;
+                if (flipped != engine.flippedControls) side = !side;
+                GJBaseGameLayer::handleButton(input.down, input.button, side);
+            });
         engine.injecting = false;
 
         // xdBot Input Fixes: restore the player transform captured at the
@@ -999,13 +1125,13 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         while (engine.frameFixIndex < engine.frameFixes.size() &&
                engine.frameFixes[engine.frameFixIndex].frame <= frame) {
             auto const& fix = engine.frameFixes[engine.frameFixIndex++];
-            if (m_player1) {
+            if (m_player1 && fix.player1.valid) {
                 m_player1->setPosition({fix.player1.x, fix.player1.y});
-                m_player1->setRotation(fix.player1.rotation);
+                if (fix.player1.rotate) m_player1->setRotation(fix.player1.rotation);
             }
-            if (m_player2 && m_gameState.m_isDualMode) {
+            if (m_player2 && m_gameState.m_isDualMode && fix.player2.valid) {
                 m_player2->setPosition({fix.player2.x, fix.player2.y});
-                m_player2->setRotation(fix.player2.rotation);
+                if (fix.player2.rotate) m_player2->setRotation(fix.player2.rotation);
             }
         }
 
@@ -1017,15 +1143,20 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
 
     void handleButton(bool down, int button, bool player2) {
         auto& engine = dimbot::Engine::get();
+        if (engine.resetting) return GJBaseGameLayer::handleButton(down, button, player2);
         if (engine.mode == dimbot::Mode::Playing && !engine.injecting) return;
 
         if (engine.mode == dimbot::Mode::Recording && !engine.injecting) {
             auto frame = dimbot::currentGameFrame();
             engine.frame = frame;
-            // Capture the exact transform immediately before the live input,
-            // matching xdBot's Input Fixes recording order.
-            engine.recordFrameFix(frame, m_player1, m_player2);
-            engine.record(down, button, player2);
+            GJBaseGameLayer::handleButton(down, button, player2);
+            if (m_player1 && !m_player1->m_isDead && !m_levelEndAnimationStarted) {
+                if (!m_levelSettings->m_twoPlayerMode) player2 = false;
+                if (!m_levelSettings->m_platformerMode && GameManager::get()->getGameVariable("0010"))
+                    player2 = !player2;
+                engine.record(down, button, player2);
+            }
+            return;
         }
 
         GJBaseGameLayer::handleButton(down, button, player2);
