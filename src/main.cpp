@@ -1078,11 +1078,12 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         auto& engine = dimbot::Engine::get();
 
-        // xdBot processes the vanilla command/physics step first, then applies
+        // xdBot processes the vanilla command step first, then applies
         // the macro action for the numbered command tick.
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
         auto pl = PlayLayer::get();
-        if (!pl || pl != this || engine.resetting || m_levelEndAnimationStarted ||
+        if (!pl || static_cast<GJBaseGameLayer*>(pl) != static_cast<GJBaseGameLayer*>(this) ||
+            engine.resetting || m_levelEndAnimationStarted ||
             !m_player1 || m_player1->m_isDead) return;
 
         if (engine.mode != dimbot::Mode::Recording && engine.mode != dimbot::Mode::Playing)
