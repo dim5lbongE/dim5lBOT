@@ -3,6 +3,7 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/GJGameLevel.hpp>
 #include <Geode/modify/CCScheduler.hpp>
 #include <Geode/ui/Popup.hpp>
 #include <Geode/ui/TextInput.hpp>
@@ -14,6 +15,7 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#include <tuple>
 #include "replay_timeline.hpp"
 #include "replay_storage.hpp"
 #include "practice_session.hpp"
@@ -459,7 +461,7 @@ protected:
         m_safeModeSprite->setString(engine.safeMode ? "Safe: ON" : "Safe: OFF");
         m_safeModeSprite->setColor(engine.safeMode ? ccColor3B{45, 170, 90} : ccColor3B{190, 70, 55});
         engine.message = engine.safeMode
-            ? "Safe Mode blocks replay completions"
+            ? "Safe Mode: results shown, records not saved"
             : "Warning: Safe Mode disabled";
     }
 
@@ -482,6 +484,21 @@ public:
 
 } // namespace dimbot
 
+class $modify(dim5lBotSafeLevel, GJGameLevel) {
+    bool suppressResultSave() const {
+        auto layer = PlayLayer::get();
+        return dimbot::Engine::get().safeMode && layer && layer->m_level == this;
+    }
+    void savePercentage(int percent, bool practice, int clicks, int attempts, bool valid) {
+        if (suppressResultSave()) return;
+        GJGameLevel::savePercentage(percent, practice, clicks, attempts, valid);
+    }
+    void saveNewScore(int value, int type, int ticks, int clicks, int coins, gd::string inputs, bool save) {
+        if (suppressResultSave()) return;
+        GJGameLevel::saveNewScore(value, type, ticks, clicks, coins, inputs, save);
+    }
+};
+
 class $modify(dim5lBotScheduler, CCScheduler) {
     void update(float dt) {
         auto& engine = dimbot::Engine::get();
@@ -495,6 +512,7 @@ class $modify(dim5lBotScheduler, CCScheduler) {
 class $modify(dim5lBotPlayLayer, PlayLayer) {
     struct Fields {
         std::unordered_map<CheckpointObject*, dimbot::PracticeSnapshot> checkpoints;
+        bool newBestShown = false;
     };
 
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
@@ -530,6 +548,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         bool recording = engine.mode == dimbot::Mode::Recording;
         engine.resetting = true;
         engine.checkpointRestored = false;
+        m_fields->newBestShown = false;
         engine.reconcileFrame = 0;
         engine.pendingDeathCheck = false;
         PlayLayer::resetLevel();
@@ -546,32 +565,107 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         engine.assistedSession = playing || engine.noclip || engine.speed() != 1.f;
     }
 
+    template<class Action>
+    void processSafeResult(Action action) {
+        if (!dimbot::Engine::get().safeMode) {
+            action();
+            return;
+        }
+        auto resultBefore = std::make_tuple(
+            m_level->m_normalPercent,
+            m_level->m_newNormalPercent2,
+            m_level->m_practicePercent,
+            m_level->m_orbCompletion,
+            m_level->m_isVerified,
+            m_level->m_isVerifiedRaw,
+            m_level->m_isCompletionLegitimate,
+            m_level->m_personalBests,
+            m_level->m_bestTime,
+            m_level->m_ticksTime,
+            m_level->m_clicksTime,
+            m_level->m_coinsTime,
+            m_level->m_inputsTime,
+            m_level->m_bestPoints,
+            m_level->m_ticksPoints,
+            m_level->m_clicksPoints,
+            m_level->m_coinsPoints,
+            m_level->m_inputsPoints,
+            m_level->m_localBestTimes,
+            m_level->m_localBestPoints,
+            m_level->m_savedTime,
+            m_level->m_savedPoints);
+        bool testModeBefore = m_isTestMode;
+        m_isTestMode = true;
+        action();
+        m_isTestMode = testModeBefore;
+        std::tie(
+            m_level->m_normalPercent,
+            m_level->m_newNormalPercent2,
+            m_level->m_practicePercent,
+            m_level->m_orbCompletion,
+            m_level->m_isVerified,
+            m_level->m_isVerifiedRaw,
+            m_level->m_isCompletionLegitimate,
+            m_level->m_personalBests,
+            m_level->m_bestTime,
+            m_level->m_ticksTime,
+            m_level->m_clicksTime,
+            m_level->m_coinsTime,
+            m_level->m_inputsTime,
+            m_level->m_bestPoints,
+            m_level->m_ticksPoints,
+            m_level->m_clicksPoints,
+            m_level->m_coinsPoints,
+            m_level->m_inputsPoints,
+            m_level->m_localBestTimes,
+            m_level->m_localBestPoints,
+            m_level->m_savedTime,
+            m_level->m_savedPoints) = resultBefore;
+    }
+
+    void showNewBest(bool reward, int orbs, int diamonds, bool key, bool noRetry, bool noTitle) {
+        m_fields->newBestShown = true;
+        if (dimbot::Engine::get().safeMode)
+            PlayLayer::showNewBest(false, 0, 0, false, noRetry, noTitle);
+        else
+            PlayLayer::showNewBest(reward, orbs, diamonds, key, noRetry, noTitle);
+    }
+
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         auto& engine = dimbot::Engine::get();
         if (engine.noclip && !m_isPaused) {
             engine.assistedSession = true;
             return;
         }
-        PlayLayer::destroyPlayer(player, object);
-
-        // Only mark a possible death here. resetLevel validates the real dead
-        // state, so pause transitions can never discard the recording.
+        bool safe = engine.safeMode;
+        bool wasDead = !m_player1 || m_player1->m_isDead;
+        bool testMode = m_isTestMode;
+        int previousBest = m_level->m_normalPercent.value();
+        int percent = getCurrentPercentInt();
+        // Use GD's test-mode reward path only during result processing.
+        // Restore it before constructing the visible NEW BEST screen.
+        processSafeResult([&] { PlayLayer::destroyPlayer(player, object); });
+        if (safe && !wasDead && m_player1 && m_player1->m_isDead &&
+            !m_isPracticeMode && !testMode && !m_isPaused &&
+            percent > previousBest && !m_fields->newBestShown)
+            showNewBest(false, 0, 0, false, false, false);
         if (engine.mode == dimbot::Mode::Recording && !m_isPracticeMode)
             engine.pendingDeathCheck = true;
     }
 
     void levelComplete() {
         auto& engine = dimbot::Engine::get();
-        // Completion can emit death/reset callbacks while the end screen is
-        // being created. Preserve the finished recording through that reset.
         engine.levelCompletionInProgress = true;
         engine.pendingDeathCheck = false;
-        if (engine.safeMode && (engine.replaySessionActive || engine.assistedSession)) {
-            engine.stop("Safe Mode blocked replay completion");
-            PlayLayer::resetLevel();
-            return;
+        bool testMode = m_isTestMode;
+        bool safe = engine.safeMode;
+        int previousBest = m_level->m_normalPercent.value();
+        processSafeResult([&] { PlayLayer::levelComplete(); });
+        if (safe) {
+            if (!m_isPracticeMode && !testMode && previousBest < 100 && !m_fields->newBestShown)
+                showNewBest(false, 0, 0, false, true, false);
+            engine.message = "Safe Mode: result displayed, record not saved";
         }
-        PlayLayer::levelComplete();
     }
 
     void onQuit() {
