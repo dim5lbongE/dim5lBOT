@@ -1,3 +1,10 @@
+# v1.3.0-beta
+
+- Reworked recording, playback, and GDR storage around xdBot-compatible timing and frame fixes.
+- Added practice checkpoint replay restoration and stricter replay validation.
+- Safe Mode now shows completion and new-best screens without saving assisted records.
+- Improved Speedhack persistence across attempts and level resets.
+
 # v1.1.0
 
 - Fixed completed levels being mistaken for deaths and clearing the finished recording.
