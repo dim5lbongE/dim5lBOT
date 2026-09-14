@@ -16,7 +16,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 add_library(${PROJECT_NAME} SHARED
     src/main.cpp
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
 if (NOT DEFINED ENV{GEODE_SDK})
     message(FATAL_ERROR "GEODE_SDK environment variable is not set")

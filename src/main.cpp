@@ -590,6 +590,18 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
                 dimbot::currentGameFrame(), engine.session));
     }
 
+    void removeCheckpoint(bool first) {
+        PlayLayer::removeCheckpoint(first);
+        std::erase_if(m_fields->checkpoints, [&](auto const& entry) {
+            return !m_checkpointArray || !m_checkpointArray->containsObject(entry.first);
+        });
+    }
+
+    void removeAllCheckpoints() {
+        PlayLayer::removeAllCheckpoints();
+        m_fields->checkpoints.clear();
+    }
+
     void loadFromCheckpoint(CheckpointObject* checkpoint) {
         auto& engine = dimbot::Engine::get();
         bool wasResetting = engine.resetting;
@@ -601,6 +613,8 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
             found->second.session != engine.session) return;
         auto const& saved = found->second;
         saved.restore(m_player1, m_player2);
+        m_queuedButtons.clear();
+        m_queuedRecordedButtons.clear();
         engine.checkpointRestored = true;
         engine.frame = saved.frame;
         engine.resumeFrame = saved.frame;
@@ -682,12 +696,12 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         while (engine.frameFixIndex < engine.frameFixes.size() &&
                engine.frameFixes[engine.frameFixIndex].frame <= frame) {
             auto const& fix = engine.frameFixes[engine.frameFixIndex++];
-            if (m_player1 && fix.player1.valid) {
-                m_player1->setPosition({fix.player1.x, fix.player1.y});
+            if (m_player1) {
+                if (fix.player1.valid) m_player1->setPosition({fix.player1.x, fix.player1.y});
                 if (fix.player1.rotate) m_player1->setRotation(fix.player1.rotation);
             }
-            if (m_player2 && m_gameState.m_isDualMode && fix.player2.valid) {
-                m_player2->setPosition({fix.player2.x, fix.player2.y});
+            if (m_player2 && m_gameState.m_isDualMode) {
+                if (fix.player2.valid) m_player2->setPosition({fix.player2.x, fix.player2.y});
                 if (fix.player2.rotate) m_player2->setRotation(fix.player2.rotation);
             }
         }

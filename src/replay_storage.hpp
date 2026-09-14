@@ -188,13 +188,17 @@ Result<> loadMacro(std::filesystem::path const& path) try {
                 auto tick = item["frame"].asDouble();
                 if (tick.isErr()) return Err("Correction frame is missing or invalid");
                 fix.frame = checkedReplayFrame(tick.unwrap() + frameOffset);
-                auto readPlayer = [](matjson::Value const& value) {
+                auto readPlayer = [&](matjson::Value const& value) {
                     PlayerFix p;
-                    p.valid = value.isObject();
+                    p.valid = value["x"].isNumber() && value["y"].isNumber();
                     p.rotate = value["r"].isNumber();
                     p.x = value["x"].asDouble().unwrapOr(0.0);
                     p.y = value["y"].asDouble().unwrapOr(0.0);
                     p.rotation = value["r"].asDouble().unwrapOr(0.0);
+                    if (root["bot"]["name"].asString().unwrapOr("") == "xdBot") {
+                        p.valid = p.valid && p.x != 0.f && p.y != 0.f;
+                        p.rotate = p.rotate && p.rotation != 0.f;
+                    }
                     if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.rotation))
                         throw std::invalid_argument("Non-finite correction");
                     return p;
