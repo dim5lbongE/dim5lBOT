@@ -607,7 +607,9 @@ protected:
         auto begin = m_page * PageSize;
         auto end = std::min(begin + PageSize, m_files.size());
         for (size_t index = begin; index < end; ++index) {
-            auto name = m_files[index].stem().string();
+            auto displayPath = m_files[index].stem();
+            if (displayPath.extension() == ".gdr") displayPath = displayPath.stem();
+            auto name = displayPath.string();
             auto sprite = ButtonSprite::create(name.c_str(), 205, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .48f);
             auto button = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(LoadReplayPopup::onSelect));
             button->setTag(static_cast<int>(index));
