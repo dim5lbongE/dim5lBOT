@@ -15,470 +15,12 @@
 #include <stdexcept>
 #include <vector>
 #include "replay_timeline.hpp"
+#include "replay_storage.hpp"
+#include "practice_session.hpp"
 
 using namespace geode::prelude;
 
 namespace dimbot {
-
-enum class Mode {
-    Idle,
-    Recording,
-    Playing
-};
-
-struct Input {
-    uint64_t frame = 0;
-    bool down = false;
-    int button = 1;
-    bool player1 = true;
-};
-
-struct PlayerFix {
-    float x = 0.f;
-    float y = 0.f;
-    float rotation = 0.f;
-    bool valid = true;
-    bool rotate = true;
-};
-
-struct FrameFix {
-    uint64_t frame = 0;
-    PlayerFix player1;
-    PlayerFix player2;
-};
-
-struct Engine {
-    Mode mode = Mode::Idle;
-    std::vector<Input> inputs;
-    std::vector<FrameFix> frameFixes;
-    uint64_t frame = 0;
-    uint64_t replayEndFrame = 0;
-    uint64_t previousProcessedFrame = std::numeric_limits<uint64_t>::max();
-    size_t playbackIndex = 0;
-    size_t frameFixIndex = 0;
-    bool injecting = false;
-    bool playAfterReset = false;
-    bool replaySessionActive = false;
-    bool safeMode = true;
-    bool noclip = false;
-    bool assistedSession = false;
-    bool pendingDeathCheck = false;
-    bool levelCompletionInProgress = false;
-    bool resetting = false;
-    bool flippedControls = false;
-    ReplayTimeline timeline;
-    int replayLevelId = 0;
-    std::string replayLevelName;
-    float speedMultiplier = 1.f;
-    std::string message = "Ready";
-
-    static Engine& get() {
-        static Engine engine;
-        return engine;
-    }
-
-    void stop(std::string text = "Stopped") {
-        mode = Mode::Idle;
-        playAfterReset = false;
-        replaySessionActive = false;
-        injecting = false;
-        pendingDeathCheck = false;
-        message = std::move(text);
-    }
-
-    void beginRecording() {
-        timeline.reset();
-        inputs.clear();
-        frame = 0;
-        replayEndFrame = 0;
-        playbackIndex = 0;
-        frameFixIndex = 0;
-        previousProcessedFrame = std::numeric_limits<uint64_t>::max();
-        frameFixes.clear();
-        mode = Mode::Recording;
-        playAfterReset = false;
-        replaySessionActive = false;
-        pendingDeathCheck = false;
-        levelCompletionInProgress = false;
-        message = "Recording";
-    }
-
-    void requestPlayback() {
-        if (inputs.empty()) {
-            message = "No replay loaded";
-            return;
-        }
-        mode = Mode::Idle;
-        frame = 0;
-        playbackIndex = 0;
-        frameFixIndex = 0;
-        previousProcessedFrame = std::numeric_limits<uint64_t>::max();
-        playAfterReset = true;
-        message = "Preparing replay";
-    }
-
-    void beginPlaybackAfterReset() {
-        timeline.reset();
-        frame = 0;
-        playbackIndex = 0;
-        frameFixIndex = 0;
-        previousProcessedFrame = std::numeric_limits<uint64_t>::max();
-        playAfterReset = false;
-        replaySessionActive = true;
-        mode = Mode::Playing;
-        message = "Playing";
-    }
-
-    void finishPlayback() {
-        mode = Mode::Idle;
-        playAfterReset = false;
-        injecting = false;
-        message = "Replay finished";
-    }
-
-    float speed() const {
-        return speedMultiplier;
-    }
-
-    void applySpeed() {
-        // Keep cocos' own time scale neutral. The scheduler hook below applies
-        // the multiplier to every update, so a restart cannot silently reset
-        // the selected speed back to 1x.
-        cocos2d::CCScheduler::get()->setTimeScale(1.f);
-        if (PlayLayer::get() && speed() != 1.f) assistedSession = true;
-    }
-
-    void setSpeed(float value) {
-        speedMultiplier = std::clamp(value, .1f, 10.f);
-        applySpeed();
-        message = fmt::format("Speedhack: {:.1f}x", speed());
-    }
-
-    void toggleNoclip() {
-        noclip = !noclip;
-        if (PlayLayer::get() && noclip) assistedSession = true;
-        message = noclip ? "Noclip enabled" : "Noclip disabled";
-    }
-
-    void resetCheats() {
-        noclip = false;
-        speedMultiplier = 1.f;
-        assistedSession = false;
-        cocos2d::CCScheduler::get()->setTimeScale(1.f);
-    }
-
-    void record(bool down, int button, bool player1) {
-        if (mode != Mode::Recording || injecting) return;
-        Input next{frame, down, button, player1};
-
-        // Preserve every accepted event in arrival order, including same-tick
-        // press/release sequences; a repeated callback is not proof of a duplicate.
-        inputs.push_back(next);
-    }
-
-    void recordFrameFix(uint64_t atFrame, PlayerObject* p1, PlayerObject* p2) {
-        if (mode != Mode::Recording || !p1 || !p2) return;
-        auto normalize = [](float rotation) {
-            rotation = std::fmod(rotation, 360.f);
-            return rotation < 0.f ? rotation + 360.f : rotation;
-        };
-        FrameFix fix;
-        fix.frame = atFrame;
-        fix.player1 = {p1->getPositionX(), p1->getPositionY(), normalize(p1->getRotation())};
-        fix.player2 = {p2->getPositionX(), p2->getPositionY(), normalize(p2->getRotation())};
-        if (!frameFixes.empty() && frameFixes.back().frame == atFrame)
-            frameFixes.back() = fix;
-        else frameFixes.push_back(fix);
-    }
-
-    void trimToFrame(uint64_t targetFrame) {
-        std::erase_if(inputs, [targetFrame](Input const& input) {
-            return input.frame >= targetFrame;
-        });
-        std::erase_if(frameFixes, [targetFrame](FrameFix const& fix) {
-            return fix.frame >= targetFrame;
-        });
-        frame = targetFrame;
-        replayEndFrame = targetFrame;
-        message = fmt::format("Practice rewind: frame {}", targetFrame);
-    }
-
-    void discardFailedRecording() {
-        stop("Recording deleted after death");
-        inputs.clear();
-        frame = 0;
-        replayEndFrame = 0;
-        playbackIndex = 0;
-        frameFixIndex = 0;
-        frameFixes.clear();
-    }
-};
-
-uint64_t currentGameFrame() {
-    auto layer = PlayLayer::get();
-    if (!layer) return 0;
-    auto time = std::max(0.0, static_cast<double>(layer->m_gameState.m_levelTime));
-    // Match xdBot's clock: truncate the level-time product and address the
-    // command tick that is about to receive the input.
-    return static_cast<uint64_t>(time * 240.0) + 1;
-}
-
-std::filesystem::path macroDirectory() {
-    return Mod::get()->getSaveDir() / "macros";
-}
-
-std::string sanitizeMacroName(std::string name) {
-    auto invalid = std::string("\\/:*?\"<>|");
-    std::erase_if(name, [&](char ch) {
-        return static_cast<unsigned char>(ch) < 32 || invalid.find(ch) != std::string::npos;
-    });
-    while (!name.empty() && (name.front() == ' ' || name.front() == '.')) name.erase(name.begin());
-    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
-    if (name.size() > 60) name.resize(60);
-    return name;
-}
-
-std::filesystem::path macroPath(std::string const& name) {
-    return macroDirectory() / (sanitizeMacroName(name) + ".gdr.json");
-}
-
-std::vector<std::filesystem::path> listMacros() {
-    std::vector<std::filesystem::path> result;
-    std::error_code error;
-    std::filesystem::create_directories(macroDirectory(), error);
-    if (error) return result;
-    for (auto const& entry : std::filesystem::directory_iterator(macroDirectory(), error)) {
-        if (!error && entry.is_regular_file() && entry.path().extension() == ".json")
-            result.push_back(entry.path());
-    }
-    std::sort(result.begin(), result.end(), [](auto const& a, auto const& b) {
-        return a.filename().string() < b.filename().string();
-    });
-    return result;
-}
-
-Result<> saveMacro(std::string const& requestedName) {
-    auto& engine = Engine::get();
-    auto name = sanitizeMacroName(requestedName);
-    if (name.empty()) return Err("Enter a replay name");
-    if (engine.inputs.empty()) return Err("No inputs to save");
-    std::error_code error;
-    std::filesystem::create_directories(macroDirectory(), error);
-    if (error) return Err("Could not create the macros folder: {}", error.message());
-
-    matjson::Value root = matjson::Value::object();
-    root["format"] = "dim5lbot-replay";
-    root["version"] = 1.0;
-    root["tps"] = 240;
-    root["accuracy"] = "frame-fixes";
-    root["gameVersion"] = 2.2081;
-    root["framerate"] = 240.0;
-    root["bot"] = matjson::Value::object();
-    root["bot"]["name"] = "dim5lBOT";
-    root["bot"]["version"] = "v1.2.0";
-    root["duration"] = engine.replayEndFrame / 240.0;
-    root["description"] = "Frame Fixes; GD 2.2081; 240 TPS";
-    root["author"] = "";
-    root["seed"] = 0;
-    root["coins"] = 0;
-    root["ldm"] = false;
-    root["dim5lSchema"] = 3;
-    root["flippedControls"] = engine.flippedControls;
-    root["level"] = matjson::Value::object();
-    root["level"]["id"] = engine.replayLevelId;
-    root["level"]["name"] = engine.replayLevelName;
-    root["totalFrames"] = static_cast<double>(engine.replayEndFrame);
-
-    matjson::Value inputs = matjson::Value::array();
-    for (auto const& input : engine.inputs) {
-        matjson::Value item = matjson::Value::object();
-        item["frame"] = static_cast<double>(input.frame);
-        item["down"] = input.down;
-        item["button"] = input.button;
-        item["player1"] = input.player1;
-        item["btn"] = input.button;
-        item["2p"] = input.player1;
-        inputs.push(std::move(item));
-    }
-    root["inputs"] = std::move(inputs);
-
-    matjson::Value fixes = matjson::Value::array();
-    for (auto const& fix : engine.frameFixes) {
-        matjson::Value item = matjson::Value::object();
-        item["frame"] = static_cast<double>(fix.frame);
-        item["p1x"] = fix.player1.x;
-        item["p1y"] = fix.player1.y;
-        item["p1r"] = fix.player1.rotation;
-        item["p2x"] = fix.player2.x;
-        item["p2y"] = fix.player2.y;
-        item["p2r"] = fix.player2.rotation;
-        item["p1"] = matjson::Value::object();
-        item["p2"] = matjson::Value::object();
-        item["p1"]["x"] = fix.player1.x;
-        item["p1"]["y"] = fix.player1.y;
-        item["p1"]["r"] = fix.player1.rotation;
-        item["p2"]["x"] = fix.player2.x;
-        item["p2"]["y"] = fix.player2.y;
-        item["p2"]["r"] = fix.player2.rotation;
-        fixes.push(std::move(item));
-    }
-    root["frameFixes"] = std::move(fixes);
-
-    root["name"] = name;
-    auto destination = macroPath(name);
-    auto temporary = destination;
-    temporary += ".tmp";
-    auto backup = destination;
-    backup += ".bak";
-    if (std::filesystem::exists(backup)) return Err("Recovery backup exists; keep it before saving again");
-    std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-    if (!stream) return Err("Could not open the replay file");
-    stream << root.dump(2);
-    stream.flush();
-    if (!stream.good()) return Err("Could not write the replay file");
-    stream.close();
-    if (stream.fail()) return Err("Could not close the replay file");
-    bool existed = std::filesystem::exists(destination);
-    if (existed) {
-        std::filesystem::rename(destination, backup, error);
-        if (error) return Err("Could not back up previous replay: {}", error.message());
-    }
-    std::filesystem::rename(temporary, destination, error);
-    if (error) {
-        std::error_code rollback;
-        if (existed) std::filesystem::rename(backup, destination, rollback);
-        return Err("Save failed; previous data retained: {}", error.message());
-    }
-    if (existed) std::filesystem::remove(backup, error);
-    return Ok();
-}
-
-Result<> loadMacro(std::filesystem::path const& path) try {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return Err("No saved replay found");
-
-    std::string contents(
-        (std::istreambuf_iterator<char>(stream)),
-        std::istreambuf_iterator<char>()
-    );
-    auto parsed = matjson::parse(contents);
-    if (parsed.isErr()) return Err("Replay JSON is invalid");
-    auto root = parsed.unwrap();
-    if (!root.isObject() || !root["inputs"].isArray()) {
-        return Err("Unsupported replay format");
-    }
-    const bool gdr = root["framerate"].isNumber();
-    auto rate = (gdr ? root["framerate"] : root["tps"]).asDouble();
-    if (rate.isErr() || rate.unwrap() != 240.0)
-        return Err("Only 240 TPS replays are supported; no silent timing conversion");
-    if (gdr && root["bot"]["name"].asString().unwrapOr("") == "xdBot") {
-        auto version = root["bot"]["version"].asString().unwrapOr("");
-        if (version != "v2.3.11" && version != "v2.4.1" && version != "2.4.1")
-            return Err("This xdBot version needs an explicit frame-offset adapter");
-    }
-
-    std::vector<Input> loaded;
-    uint64_t lastFrame = 0;
-    for (auto const& item : root["inputs"]) {
-        auto frame = item["frame"].asDouble();
-        auto down = item["down"].asBool();
-        auto button = (gdr ? item["btn"] : item["button"]).asInt();
-        auto player1 = (gdr ? item["2p"] : item["player1"]).asBool();
-        if (frame.isErr() || down.isErr() || button.isErr() || player1.isErr()) {
-            return Err("Replay contains a malformed input");
-        }
-        auto frameNumber = checkedReplayFrame(frame.unwrap());
-        auto buttonNumber = static_cast<int>(button.unwrap());
-        if (buttonNumber < 1 || buttonNumber > 3) {
-            return Err("Replay contains an unsupported button");
-        }
-        loaded.push_back({frameNumber, down.unwrap(), buttonNumber, player1.unwrap()});
-        lastFrame = std::max(lastFrame, frameNumber);
-    }
-
-    std::stable_sort(loaded.begin(), loaded.end(), [](Input const& a, Input const& b) {
-        return a.frame < b.frame;
-    });
-
-    std::vector<FrameFix> loadedFixes;
-    if (root["frameFixes"].isArray()) {
-        for (auto const& item : root["frameFixes"]) {
-            if (gdr) {
-                FrameFix fix;
-                auto tick = item["frame"].asDouble();
-                if (tick.isErr()) return Err("Correction frame is missing or invalid");
-                fix.frame = checkedReplayFrame(tick.unwrap());
-                auto readPlayer = [](matjson::Value const& value) {
-                    PlayerFix p;
-                    p.valid = value.isObject();
-                    p.rotate = value["r"].isNumber();
-                    p.x = value["x"].asDouble().unwrapOr(0.0);
-                    p.y = value["y"].asDouble().unwrapOr(0.0);
-                    p.rotation = value["r"].asDouble().unwrapOr(0.0);
-                    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.rotation))
-                        throw std::invalid_argument("Non-finite correction");
-                    return p;
-                };
-                fix.player1 = readPlayer(item["p1"]);
-                fix.player2 = readPlayer(item["p2"]);
-                loadedFixes.push_back(fix);
-                lastFrame = std::max(lastFrame, fix.frame);
-                continue;
-            }
-            auto frame = item["frame"].asDouble();
-            auto p1x = item["p1x"].asDouble();
-            auto p1y = item["p1y"].asDouble();
-            auto p1r = item["p1r"].asDouble();
-            auto p2x = item["p2x"].asDouble();
-            auto p2y = item["p2y"].asDouble();
-            auto p2r = item["p2r"].asDouble();
-            if (frame.isErr() || p1x.isErr() || p1y.isErr() || p1r.isErr() ||
-                p2x.isErr() || p2y.isErr() || p2r.isErr()) {
-                return Err("Replay contains a malformed frame fix");
-            }
-            FrameFix fix;
-            fix.frame = checkedReplayFrame(frame.unwrap());
-            fix.player1 = {
-                static_cast<float>(p1x.unwrap()), static_cast<float>(p1y.unwrap()),
-                static_cast<float>(p1r.unwrap())
-            };
-            fix.player2 = {
-                static_cast<float>(p2x.unwrap()), static_cast<float>(p2y.unwrap()),
-                static_cast<float>(p2r.unwrap())
-            };
-            loadedFixes.push_back(fix);
-            lastFrame = std::max(lastFrame, fix.frame);
-        }
-        std::stable_sort(loadedFixes.begin(), loadedFixes.end(), [](FrameFix const& a, FrameFix const& b) {
-            return a.frame < b.frame;
-        });
-    }
-
-    auto totalFrames = root["totalFrames"].asDouble();
-    auto endFrame = totalFrames.isOk()
-        ? checkedReplayFrame(totalFrames.unwrap())
-        : lastFrame;
-    auto& engine = Engine::get();
-    engine.stop();
-    engine.inputs = std::move(loaded);
-    engine.frameFixes = std::move(loadedFixes);
-    engine.replayEndFrame = std::max(endFrame, lastFrame);
-    engine.frame = 0;
-    engine.playbackIndex = 0;
-    engine.frameFixIndex = 0;
-    engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
-    engine.timeline.reset();
-    engine.flippedControls = root["flippedControls"].asBool().unwrapOr(false);
-    engine.replayLevelId = root["level"]["id"].asInt().unwrapOr(0);
-    engine.replayLevelName = root["level"]["name"].asString().unwrapOr("");
-    engine.message = fmt::format(
-        "Loaded {} ({} inputs, {} fixes)",
-        path.stem().string(), engine.inputs.size(), engine.frameFixes.size()
-    );
-    return Ok();
-} catch (std::exception const& error) {
-    return Err("Invalid replay: {}", error.what());
-}
 
 std::string stateText() {
     auto const& engine = Engine::get();
@@ -497,7 +39,6 @@ class SaveReplayPopup final : public Popup {
 protected:
     TextInput* m_nameInput = nullptr;
     CCLabelBMFont* m_status = nullptr;
-    std::string m_pendingOverwrite;
 
     bool init() {
         if (!Popup::init(340.f, 180.f)) return false;
@@ -508,7 +49,7 @@ protected:
         m_nameInput->setPosition({170.f, 105.f});
         m_mainLayer->addChild(m_nameInput);
 
-        m_status = CCLabelBMFont::create("Existing names will be overwritten", "chatFont.fnt");
+        m_status = CCLabelBMFont::create("GDR format - existing saves are kept", "chatFont.fnt");
         m_status->setScale(.5f);
         m_status->setColor({190, 205, 235});
         m_status->setPosition({170.f, 72.f});
@@ -523,20 +64,12 @@ protected:
 
     void onSave(CCObject*) {
         std::string name = m_nameInput ? std::string(m_nameInput->getString()) : "";
-        auto cleanName = sanitizeMacroName(name);
-        if (!cleanName.empty() && std::filesystem::exists(macroPath(cleanName)) && m_pendingOverwrite != cleanName) {
-            m_pendingOverwrite = cleanName;
-            m_status->setString("Already exists - press Save again to overwrite");
-            m_status->setColor({255, 205, 80});
-            return;
-        }
         auto result = saveMacro(name);
         if (result.isErr()) {
             m_status->setString(result.unwrapErr().c_str());
             m_status->setColor({255, 100, 100});
             return;
         }
-        Engine::get().message = fmt::format("Saved: {}", cleanName);
         onClose(nullptr);
     }
 
@@ -865,10 +398,6 @@ protected:
             return;
         }
         auto layer = PlayLayer::get();
-        if (layer->m_isPracticeMode) {
-            Engine::get().message = "Use normal mode for deterministic recording";
-            return;
-        }
         Engine::get().beginRecording();
         Engine::get().flippedControls = false;
         Engine::get().replayLevelId = layer->m_level->m_levelID.value();
@@ -887,10 +416,6 @@ protected:
         auto layer = PlayLayer::get();
         if (!layer) {
             Engine::get().message = "Enter a level first";
-            return;
-        }
-        if (layer->m_isPracticeMode) {
-            Engine::get().message = "Use normal mode for deterministic playback";
             return;
         }
         if (Engine::get().replayLevelId > 0 &&
@@ -968,11 +493,17 @@ class $modify(dim5lBotScheduler, CCScheduler) {
 };
 
 class $modify(dim5lBotPlayLayer, PlayLayer) {
+    struct Fields {
+        std::unordered_map<CheckpointObject*, dimbot::PracticeSnapshot> checkpoints;
+    };
+
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
         auto& engine = dimbot::Engine::get();
         engine.stop("Ready");
         engine.assistedSession = engine.noclip || engine.speed() != 1.f;
+        engine.physicalButtons.fill(false);
+        ++engine.session;
         engine.applySpeed();
         engine.frame = 0;
         engine.playbackIndex = 0;
@@ -995,44 +526,24 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void resetLevel() {
         auto& engine = dimbot::Engine::get();
-        auto startPlayback = engine.playAfterReset || engine.mode == dimbot::Mode::Playing;
+        bool playing = engine.playAfterReset || engine.mode == dimbot::Mode::Playing;
+        bool recording = engine.mode == dimbot::Mode::Recording;
         engine.resetting = true;
-
-        // Never discard a recording directly from destroyPlayer/postUpdate:
-        // pause transitions can emit a synthetic destroyPlayer call. A normal
-        // recording is failed only when a real dead player triggers a reset.
-        auto discardRecording = engine.pendingDeathCheck &&
-            !engine.levelCompletionInProgress &&
-            engine.mode == dimbot::Mode::Recording &&
-            !m_isPaused && !m_isPracticeMode &&
-            ((m_player1 && m_player1->m_isDead) ||
-             (m_player2 && m_player2->m_isDead));
+        engine.checkpointRestored = false;
+        engine.reconcileFrame = 0;
         engine.pendingDeathCheck = false;
-        // Keep completion protection alive for the entire end-screen lifecycle.
-        // Geometry Dash may invoke resetLevel more than once after a clear.
-        // Like xdBot, Record stays enabled across normal retries. Clear the
-        // old attempt before the reset so tick numbers cannot overlap.
-        if ((discardRecording || engine.mode == dimbot::Mode::Recording) &&
-            !m_isPracticeMode && !engine.levelCompletionInProgress)
-            engine.beginRecording();
-
-        engine.previousProcessedFrame = std::numeric_limits<uint64_t>::max();
-        if (!startPlayback) engine.frameFixIndex = 0;
         PlayLayer::resetLevel();
         engine.resetting = false;
+        engine.applySpeed();
+        if (engine.checkpointRestored) return;
+        m_fields->checkpoints.clear();
         engine.timeline.reset();
+        engine.resumeFrame = 0;
         if (m_player1) m_player1->releaseAllButtons();
         if (m_player2) m_player2->releaseAllButtons();
-        // Geometry Dash resets the scheduler time scale during a death restart.
-        // Restore the user's selected multiplier after every level reset.
-        engine.applySpeed();
-        if (startPlayback) {
-            engine.beginPlaybackAfterReset();
-        } else {
-            engine.replaySessionActive = false;
-            engine.assistedSession = engine.noclip || engine.speed() != 1.f;
-            if (engine.mode == dimbot::Mode::Recording) engine.frame = 0;
-        }
+        if (playing) engine.beginPlaybackAfterReset();
+        else if (recording && !engine.levelCompletionInProgress) engine.beginRecording();
+        engine.assistedSession = engine.noclip || engine.speed() != 1.f;
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
@@ -1064,16 +575,45 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
     }
 
     void onQuit() {
+        dimbot::Engine::get().stop();
         dimbot::Engine::get().resetCheats();
+        m_fields->checkpoints.clear();
         PlayLayer::onQuit();
     }
 
-    void loadFromCheckpoint(CheckpointObject* checkpoint) {
-        PlayLayer::loadFromCheckpoint(checkpoint);
+    void storeCheckpoint(CheckpointObject* checkpoint) {
+        PlayLayer::storeCheckpoint(checkpoint);
         auto& engine = dimbot::Engine::get();
-        if (engine.mode != dimbot::Mode::Recording || !checkpoint) return;
-        engine.trimToFrame(dimbot::currentGameFrame());
+        if (!checkpoint || engine.mode == dimbot::Mode::Idle || engine.resetting) return;
+        m_fields->checkpoints.insert_or_assign(checkpoint,
+            dimbot::PracticeSnapshot::capture(checkpoint, m_player1, m_player2,
+                dimbot::currentGameFrame(), engine.session));
     }
+
+    void loadFromCheckpoint(CheckpointObject* checkpoint) {
+        auto& engine = dimbot::Engine::get();
+        bool wasResetting = engine.resetting;
+        engine.resetting = true;
+        PlayLayer::loadFromCheckpoint(checkpoint);
+        engine.resetting = wasResetting;
+        auto found = m_fields->checkpoints.find(checkpoint);
+        if (engine.mode == dimbot::Mode::Idle || found == m_fields->checkpoints.end() ||
+            found->second.session != engine.session) return;
+        auto const& saved = found->second;
+        saved.restore(m_player1, m_player2);
+        engine.checkpointRestored = true;
+        engine.frame = saved.frame;
+        engine.resumeFrame = saved.frame;
+        engine.timeline.reset();
+        engine.playbackIndex = dimbot::replayCursorAfter(engine.inputs, saved.frame);
+        engine.frameFixIndex = dimbot::replayCursorAfter(engine.frameFixes, saved.frame);
+        if (engine.mode == dimbot::Mode::Recording) {
+            engine.trimToFrame(saved.frame);
+            engine.reconcileFrame = saved.frame + 2;
+        }
+        engine.applySpeed();
+    }
+
 };
 
 class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
@@ -1093,6 +633,21 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
 
         auto frame = dimbot::currentGameFrame();
         engine.frame = frame;
+        if (engine.resumeFrame && frame <= engine.resumeFrame) return;
+        engine.resumeFrame = 0;
+        if (engine.mode == dimbot::Mode::Recording && engine.reconcileFrame && frame >= engine.reconcileFrame) {
+            engine.reconcileFrame = 0;
+            for (int side = 0; side < (m_levelSettings->m_twoPlayerMode ? 2 : 1); ++side) {
+                for (int button = 1; button <= 3; ++button) {
+                    int index = side * 3 + button - 1;
+                    bool held = engine.physicalButtons[index];
+                    if (!m_levelSettings->m_twoPlayerMode) held = held || engine.physicalButtons[index + 3];
+                    // Route the transition through recording so a practice splice
+                    // replays the same hold/release state from the beginning.
+                    handleButton(held, button, side != 0);
+                }
+            }
+        }
 
         // A rendered frame may visit processCommands more than once. Never
         // consume the same macro tick twice.
@@ -1123,8 +678,7 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
             });
         engine.injecting = false;
 
-        // xdBot Input Fixes: restore the player transform captured at the
-        // corresponding input before the following physics tick runs.
+        // Apply the separate Frame Fixes stream after ordered replay inputs.
         while (engine.frameFixIndex < engine.frameFixes.size() &&
                engine.frameFixes[engine.frameFixIndex].frame <= frame) {
             auto const& fix = engine.frameFixes[engine.frameFixIndex++];
@@ -1138,15 +692,16 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
             }
         }
 
-        if (engine.playbackIndex >= engine.inputs.size() &&
-            engine.frameFixIndex >= engine.frameFixes.size() &&
-            frame > engine.replayEndFrame)
-            engine.finishPlayback();
+        // Keep playback armed until Stop/quit. The last input can be a hold,
+        // and a subsequent death must restart this same replay.
     }
 
     void handleButton(bool down, int button, bool player2) {
         auto& engine = dimbot::Engine::get();
         if (engine.resetting) return GJBaseGameLayer::handleButton(down, button, player2);
+        if (button < 1 || button > 3) return GJBaseGameLayer::handleButton(down, button, player2);
+        if (!engine.injecting) engine.physicalButtons[(player2 ? 3 : 0) + button - 1] = down;
+        if (engine.reconcileFrame && engine.mode == dimbot::Mode::Recording) return;
         if (engine.mode == dimbot::Mode::Playing && !engine.injecting) return;
 
         if (engine.mode == dimbot::Mode::Recording && !engine.injecting) {

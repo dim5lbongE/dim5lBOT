@@ -4,8 +4,14 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <algorithm>
 
 namespace dimbot {
+template<class Events>
+size_t replayCursorAfter(Events const& events, uint64_t tick) {
+    return static_cast<size_t>(std::upper_bound(events.begin(), events.end(), tick,
+        [](uint64_t frame, auto const& event) { return frame < event.frame; }) - events.begin());
+}
 // Shared by the game adapter and standalone regression tests.
 struct ReplayTimeline {
     uint64_t previous = std::numeric_limits<uint64_t>::max();
