@@ -2,6 +2,7 @@
 #include <Geode/Geode.hpp>
 #include <array>
 #include <unordered_map>
+#include <map>
 #include <cstdint>
 
 namespace dimbot {
@@ -9,20 +10,23 @@ namespace dimbot {
 // operations instead of copying offsets from xdBot's GD 2.2074 player layout.
 struct PracticePlayer {
     geode::Ref<PlayerCheckpoint> state;
-    gd::map<int, bool> holding;
+    std::map<int, bool> holding;
     static PracticePlayer capture(PlayerObject* player) {
         PracticePlayer result;
         if (player) {
             result.state = PlayerCheckpoint::create();
             player->saveToCheckpoint(result.state);
-            result.holding = player->m_holdingButtons;
+            for (auto const& entry : player->m_holdingButtons)
+                result.holding.emplace(entry.first, entry.second);
         }
         return result;
     }
     void restore(PlayerObject* player) const {
         if (!player || !state) return;
         player->loadFromCheckpoint(state);
-        player->m_holdingButtons = holding;
+        player->m_holdingButtons.clear();
+        for (auto const& entry : holding)
+            player->m_holdingButtons[entry.first] = entry.second;
     }
 };
 struct PracticeSnapshot {

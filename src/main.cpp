@@ -543,7 +543,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         if (m_player2) m_player2->releaseAllButtons();
         if (playing) engine.beginPlaybackAfterReset();
         else if (recording && !engine.levelCompletionInProgress) engine.beginRecording();
-        engine.assistedSession = engine.noclip || engine.speed() != 1.f;
+        engine.assistedSession = playing || engine.noclip || engine.speed() != 1.f;
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {

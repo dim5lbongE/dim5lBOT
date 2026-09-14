@@ -72,6 +72,7 @@ struct Engine {
     }
 
     void stop(std::string text = "Stopped") {
+        bool wasPlaying = mode == Mode::Playing;
         reconcileFrame = resumeFrame = 0;
         mode = Mode::Idle;
         playAfterReset = false;
@@ -79,6 +80,13 @@ struct Engine {
         injecting = false;
         pendingDeathCheck = false;
         message = std::move(text);
+        if (wasPlaying) {
+            assistedSession = true;
+            if (auto layer = PlayLayer::get()) {
+                if (layer->m_player1) layer->m_player1->releaseAllButtons();
+                if (layer->m_player2) layer->m_player2->releaseAllButtons();
+            }
+        }
     }
 
     void beginRecording() {
@@ -124,6 +132,7 @@ struct Engine {
         previousProcessedFrame = std::numeric_limits<uint64_t>::max();
         playAfterReset = false;
         replaySessionActive = true;
+        assistedSession = true;
         mode = Mode::Playing;
         message = "Playing";
     }
