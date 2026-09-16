@@ -60,6 +60,7 @@ struct Engine {
     uint64_t resumeFrame = 0;
     uint64_t reconcileFrame = 0;
     std::array<bool, 6> physicalButtons{};
+    std::array<bool, 6> recordingBlockedButtons{};
     ReplayTimeline timeline;
     int replayLevelId = 0;
     std::string replayLevelName;
@@ -91,6 +92,8 @@ struct Engine {
 
     void beginRecording() {
         ++session;
+        // Ignore keys already held when Record was pressed until release.
+        recordingBlockedButtons = physicalButtons;
         reconcileFrame = resumeFrame = 0;
         timeline.reset();
         inputs.clear();
