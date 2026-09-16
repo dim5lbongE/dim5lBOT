@@ -808,11 +808,19 @@ class $modify(dim5lBotBaseGameLayer, GJBaseGameLayer) {
         auto& engine = dimbot::Engine::get();
         if (engine.resetting) return GJBaseGameLayer::handleButton(down, button, player2);
         if (button < 1 || button > 3) return GJBaseGameLayer::handleButton(down, button, player2);
-        if (!engine.injecting) engine.physicalButtons[(player2 ? 3 : 0) + button - 1] = down;
+        int physicalIndex = (player2 ? 3 : 0) + button - 1;
+        if (!engine.injecting) engine.physicalButtons[physicalIndex] = down;
         if (engine.reconcileFrame && engine.mode == dimbot::Mode::Recording) return;
         if (engine.mode == dimbot::Mode::Playing && !engine.injecting) return;
 
         if (engine.mode == dimbot::Mode::Recording && !engine.injecting) {
+            if (engine.recordingBlockedButtons[physicalIndex]) {
+                if (!down) {
+                    engine.recordingBlockedButtons[physicalIndex] = false;
+                    GJBaseGameLayer::handleButton(false, button, player2);
+                }
+                return;
+            }
             auto frame = dimbot::currentGameFrame();
             engine.frame = frame;
             GJBaseGameLayer::handleButton(down, button, player2);
