@@ -1,3 +1,8 @@
+# v1.3.1
+
+- Fixed recording starting with a button stuck in the held state.
+- Inputs held before pressing Record are now ignored until released.
+
 # v1.3.0-beta
 
 - Reworked recording, playback, and GDR storage around xdBot-compatible timing and frame fixes.

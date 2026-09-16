@@ -55,7 +55,7 @@ Result<> saveMacro(std::string const& requestedName) try {
     root["framerate"] = 240.0;
     root["bot"] = matjson::Value::object();
     root["bot"]["name"] = "dim5lBOT";
-    root["bot"]["version"] = "v1.3.0-beta";
+    root["bot"]["version"] = "v1.3.1";
     root["duration"] = engine.inputs.back().frame / 240.0;
     root["description"] = "Frame Fixes; GD 2.2081; 240 TPS";
     root["author"] = "";
