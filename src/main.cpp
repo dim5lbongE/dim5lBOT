@@ -24,6 +24,12 @@ using namespace geode::prelude;
 
 namespace dimbot {
 
+bool shouldBlockResults() {
+    auto const& engine = Engine::get();
+    return engine.safeMode && (engine.assistedSession || engine.noclip ||
+        engine.speed() != 1.f || engine.mode == Mode::Playing || engine.replaySessionActive);
+}
+
 std::string stateText() {
     auto const& engine = Engine::get();
     char const* mode = "IDLE";
@@ -461,7 +467,7 @@ protected:
         m_safeModeSprite->setString(engine.safeMode ? "Safe: ON" : "Safe: OFF");
         m_safeModeSprite->setColor(engine.safeMode ? ccColor3B{45, 170, 90} : ccColor3B{190, 70, 55});
         engine.message = engine.safeMode
-            ? "Safe Mode: results shown, records not saved"
+            ? "Safe Mode: blocks assisted records only"
             : "Warning: Safe Mode disabled";
     }
 
@@ -487,7 +493,7 @@ public:
 class $modify(dim5lBotSafeLevel, GJGameLevel) {
     bool suppressResultSave() const {
         auto layer = PlayLayer::get();
-        return dimbot::Engine::get().safeMode && layer && layer->m_level == this;
+        return dimbot::shouldBlockResults() && layer && layer->m_level == this;
     }
     void savePercentage(int percent, bool practice, int clicks, int attempts, bool valid) {
         if (suppressResultSave()) return;
@@ -567,7 +573,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     template<class Action>
     void processSafeResult(Action action) {
-        if (!dimbot::Engine::get().safeMode) {
+        if (!dimbot::shouldBlockResults()) {
             action();
             return;
         }
@@ -625,7 +631,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void showNewBest(bool reward, int orbs, int diamonds, bool key, bool noRetry, bool noTitle) {
         m_fields->newBestShown = true;
-        if (dimbot::Engine::get().safeMode)
+        if (dimbot::shouldBlockResults())
             PlayLayer::showNewBest(false, 0, 0, false, noRetry, noTitle);
         else
             PlayLayer::showNewBest(reward, orbs, diamonds, key, noRetry, noTitle);
@@ -637,7 +643,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
             engine.assistedSession = true;
             return;
         }
-        bool safe = engine.safeMode;
+        bool safe = dimbot::shouldBlockResults();
         bool wasDead = !m_player1 || m_player1->m_isDead;
         bool testMode = m_isTestMode;
         int previousBest = m_level->m_normalPercent.value();
@@ -658,7 +664,7 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
         engine.levelCompletionInProgress = true;
         engine.pendingDeathCheck = false;
         bool testMode = m_isTestMode;
-        bool safe = engine.safeMode;
+        bool safe = dimbot::shouldBlockResults();
         int previousBest = m_level->m_normalPercent.value();
         processSafeResult([&] { PlayLayer::levelComplete(); });
         if (safe) {
@@ -670,9 +676,10 @@ class $modify(dim5lBotPlayLayer, PlayLayer) {
 
     void onQuit() {
         dimbot::Engine::get().stop();
-        dimbot::Engine::get().resetCheats();
         m_fields->checkpoints.clear();
+        // Keep this attempt's assisted flag until GD has finished saving on exit.
         PlayLayer::onQuit();
+        dimbot::Engine::get().resetCheats();
     }
 
     void storeCheckpoint(CheckpointObject* checkpoint) {
